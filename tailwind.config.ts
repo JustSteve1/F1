@@ -52,6 +52,24 @@ export default {
 					DEFAULT: 'hsl(var(--card))',
 					foreground: 'hsl(var(--card-foreground))'
 				},
+				f1: {
+					red: '#E10600',
+					black: '#15151E',
+					gray: '#38383F',
+					white: '#FFFFFF',
+				},
+				teams: {
+					mercedes: '#00D2BE',
+					redbull: '#0600EF',
+					ferrari: '#DC0000',
+					mclaren: '#FF8700',
+					astonmartin: '#006F62',
+					alpine: '#0090FF',
+					williams: '#005AFF',
+					alphatauri: '#2B4562',
+					alfaromeo: '#900000',
+					haas: '#FFFFFF',
+				},
 				sidebar: {
 					DEFAULT: 'hsl(var(--sidebar-background))',
 					foreground: 'hsl(var(--sidebar-foreground))',

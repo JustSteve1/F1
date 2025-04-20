@@ -1,0 +1,8 @@
+
+fastapi==0.95.0
+uvicorn==0.21.1
+websockets==11.0.2
+google-cloud-firestore==2.11.0
+python-dotenv==1.0.0
+httpx==0.24.0
+asyncio==3.4.3

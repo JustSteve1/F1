@@ -1,73 +1,97 @@
-# Welcome to your Lovable project
 
-## Project info
+# F1 Live Timing Application
 
-**URL**: https://lovable.dev/projects/e70467e3-1cbc-4d01-b3b4-fc34a0a23dab
+A real-time Formula 1 timing application that displays live lap data from F1 races, capturing and storing timing information in Google Cloud.
 
-## How can I edit this code?
+## Features
 
-There are several ways of editing your application.
+- React frontend with F1-inspired design
+- Python backend with FastAPI
+- Real-time data updates from the F1 timing API
+- Google Cloud Firestore database for data storage
+- Lap-by-lap timing analysis
+- Driver performance comparisons
 
-**Use Lovable**
+## Project Structure
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/e70467e3-1cbc-4d01-b3b4-fc34a0a23dab) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```
+├── backend/               # Python FastAPI backend
+│   ├── main.py            # Main API server
+│   └── requirements.txt   # Python dependencies
+│
+├── public/                # Static assets
+│
+└── src/                   # React frontend
+    ├── components/        # React components
+    ├── data/              # Mock data for development
+    ├── pages/             # Page components
+    ├── services/          # API services
+    ├── types/             # TypeScript types
+    └── api/               # API documentation
 ```
 
-**Edit a file directly in GitHub**
+## Getting Started
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### Frontend
 
-**Use GitHub Codespaces**
+1. Install dependencies:
+   ```
+   npm install
+   ```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+2. Start the development server:
+   ```
+   npm run dev
+   ```
 
-## What technologies are used for this project?
+3. The frontend will be available at http://localhost:8080
 
-This project is built with:
+### Backend
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+1. Navigate to the backend directory:
+   ```
+   cd backend
+   ```
 
-## How can I deploy this project?
+2. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
 
-Simply open [Lovable](https://lovable.dev/projects/e70467e3-1cbc-4d01-b3b4-fc34a0a23dab) and click on Share -> Publish.
+3. Set up Google Cloud credentials:
+   ```
+   export GOOGLE_APPLICATION_CREDENTIALS="/path/to/your/service-account-key.json"
+   ```
 
-## Can I connect a custom domain to my Lovable project?
+4. Start the backend server:
+   ```
+   uvicorn main:app --reload
+   ```
 
-Yes, you can!
+5. The API will be available at http://localhost:8000
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## Frontend-Backend Integration
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+In a production environment, update the API base URL in `src/services/apiService.ts` to point to your deployed backend.
+
+## Google Cloud Setup
+
+1. Create a new Google Cloud project
+2. Enable Firestore and set up a database
+3. Create a service account with appropriate permissions
+4. Download the service account key JSON file
+5. Set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to point to this file
+
+## F1 API Integration
+
+The application connects to the official F1 timing API. Please note that access to this API may be restricted, and you should ensure you have the necessary permissions to use it.
+
+## Deployment
+
+### Frontend
+- Build the React app: `npm run build`
+- Deploy to your preferred hosting service (Netlify, Vercel, GitHub Pages, etc.)
+
+### Backend
+- Deploy to Google Cloud Run, App Engine, or any other cloud service that supports Python
+- Ensure environment variables are properly set in your deployment environment
