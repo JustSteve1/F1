@@ -9,173 +9,7 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
-      drivers: {
-        Row: {
-          code: string
-          created_at: string | null
-          full_name: string
-          id: string
-          number: number
-          team_id: string | null
-          updated_at: string | null
-        }
-        Insert: {
-          code: string
-          created_at?: string | null
-          full_name: string
-          id?: string
-          number: number
-          team_id?: string | null
-          updated_at?: string | null
-        }
-        Update: {
-          code?: string
-          created_at?: string | null
-          full_name?: string
-          id?: string
-          number?: number
-          team_id?: string | null
-          updated_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "drivers_team_id_fkey"
-            columns: ["team_id"]
-            isOneToOne: false
-            referencedRelation: "teams"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      lap_times: {
-        Row: {
-          created_at: string | null
-          driver_id: string | null
-          gap: string | null
-          id: string
-          interval: string | null
-          is_personal_best: boolean | null
-          is_purple_sector: boolean | null
-          lap_number: number
-          position: number
-          sector1_time: unknown | null
-          sector2_time: unknown | null
-          sector3_time: unknown | null
-          session_id: string | null
-          time: unknown | null
-        }
-        Insert: {
-          created_at?: string | null
-          driver_id?: string | null
-          gap?: string | null
-          id?: string
-          interval?: string | null
-          is_personal_best?: boolean | null
-          is_purple_sector?: boolean | null
-          lap_number: number
-          position: number
-          sector1_time?: unknown | null
-          sector2_time?: unknown | null
-          sector3_time?: unknown | null
-          session_id?: string | null
-          time?: unknown | null
-        }
-        Update: {
-          created_at?: string | null
-          driver_id?: string | null
-          gap?: string | null
-          id?: string
-          interval?: string | null
-          is_personal_best?: boolean | null
-          is_purple_sector?: boolean | null
-          lap_number?: number
-          position?: number
-          sector1_time?: unknown | null
-          sector2_time?: unknown | null
-          sector3_time?: unknown | null
-          session_id?: string | null
-          time?: unknown | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "lap_times_driver_id_fkey"
-            columns: ["driver_id"]
-            isOneToOne: false
-            referencedRelation: "drivers"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "lap_times_session_id_fkey"
-            columns: ["session_id"]
-            isOneToOne: false
-            referencedRelation: "sessions"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      sessions: {
-        Row: {
-          circuit: string
-          created_at: string | null
-          current_lap: number | null
-          end_time: string | null
-          id: string
-          name: string
-          start_time: string
-          status: string | null
-          total_laps: number | null
-          type: Database["public"]["Enums"]["session_type"]
-          updated_at: string | null
-        }
-        Insert: {
-          circuit: string
-          created_at?: string | null
-          current_lap?: number | null
-          end_time?: string | null
-          id?: string
-          name: string
-          start_time: string
-          status?: string | null
-          total_laps?: number | null
-          type: Database["public"]["Enums"]["session_type"]
-          updated_at?: string | null
-        }
-        Update: {
-          circuit?: string
-          created_at?: string | null
-          current_lap?: number | null
-          end_time?: string | null
-          id?: string
-          name?: string
-          start_time?: string
-          status?: string | null
-          total_laps?: number | null
-          type?: Database["public"]["Enums"]["session_type"]
-          updated_at?: string | null
-        }
-        Relationships: []
-      }
-      teams: {
-        Row: {
-          color: string
-          created_at: string | null
-          id: string
-          name: string
-        }
-        Insert: {
-          color: string
-          created_at?: string | null
-          id?: string
-          name: string
-        }
-        Update: {
-          color?: string
-          created_at?: string | null
-          id?: string
-          name?: string
-        }
-        Relationships: []
-      }
+      [_ in never]: never
     }
     Views: {
       [_ in never]: never
@@ -184,13 +18,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      session_type:
-        | "practice1"
-        | "practice2"
-        | "practice3"
-        | "qualifying"
-        | "sprint"
-        | "race"
+      [_ in never]: never
     }
     CompositeTypes: {
       [_ in never]: never
@@ -305,15 +133,6 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {
-      session_type: [
-        "practice1",
-        "practice2",
-        "practice3",
-        "qualifying",
-        "sprint",
-        "race",
-      ],
-    },
+    Enums: {},
   },
 } as const
