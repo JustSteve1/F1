@@ -1,3 +1,4 @@
+
 import { AuthProvider } from './hooks/useAuth';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import AuthPage from './pages/auth/AuthPage';
