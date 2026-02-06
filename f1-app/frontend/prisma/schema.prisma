@@ -90,3 +90,36 @@ model UsageLog {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
+
+model PromptLog {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  prompt    String
+  response  String   @db.Text
+  model     String
+  toolCalls Json? 
+}
+
+model Result {
+  id          String   @id @default(cuid())
+  sessionId   String
+  driverId    String
+  position    Int?
+  points      Float?
+  grid        Int?
+  laps        Int?
+  status      String?
+  timeMs      Int?
+  fastestLap  Int?
+  rank        Int?
+  
+  // Metadata for querying
+  season      Int
+  round       Int
+  circuitId   String
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([sessionId, driverId])
+  @@index([season, round])
+}

@@ -1,15 +1,69 @@
 @import "tailwindcss";
 
 :root {
-  --background: #000000;
+  --background: #050505;
   --foreground: #ffffff;
+  --f1-red: #e10600;
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-bg: rgba(20, 20, 20, 0.6);
 }
 
 body {
   background-color: var(--background);
   color: var(--foreground);
+  font-family: var(--font-inter), sans-serif;
+  overflow: hidden; /* App-like feel */
 }
 
 @theme {
   --font-serif: var(--font-pt-serif), serif;
+  --font-mono: var(--font-fira-code), monospace;
+  --color-f1-red: var(--f1-red);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Utilities */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+}
+
+.f1-gradient-text {
+  background: linear-gradient(to right, #fff, #888);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(225, 6, 0, 0.2); border-color: rgba(225, 6, 0, 0.5); }
+  50% { box-shadow: 0 0 15px rgba(225, 6, 0, 0.4); border-color: rgba(225, 6, 0, 0.8); }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2s infinite;
 }
