@@ -1,0 +1,124 @@
+{
+    "project": "f1-data-library",
+    "dataset": "f1_data_library_DS",
+    "location": "EU",
+    "allowlist": [
+        "laps_clean",
+        "public_circuits",
+        "public_drivers",
+        "public_laps",
+        "public_races",
+        "public_seasons",
+        "public_session_data_audit",
+        "public_sessions"
+    ],
+    "tables": {
+        "laps_clean": {
+            "columns": [
+                "session_id",
+                "driver_id",
+                "lap_number",
+                "lap_time_ms",
+                "sector1_ms",
+                "sector2_ms",
+                "sector3_ms",
+                "position",
+                "compound",
+                "tyre_life",
+                "stint",
+                "session_type",
+                "race_name",
+                "race_date",
+                "circuit",
+                "country",
+                "season"
+            ],
+            "description": "Imported from BigQuery table laps_clean"
+        },
+        "public_circuits": {
+            "columns": [
+                "circuit_id",
+                "name",
+                "country",
+                "datastream_metadata"
+            ],
+            "description": "Imported from BigQuery table public_circuits"
+        },
+        "public_drivers": {
+            "columns": [
+                "driver_id",
+                "driver_code",
+                "first_name",
+                "last_name",
+                "full_name",
+                "nationality",
+                "datastream_metadata"
+            ],
+            "description": "Imported from BigQuery table public_drivers"
+        },
+        "public_laps": {
+            "columns": [
+                "lap_id",
+                "session_id",
+                "driver_id",
+                "lap_number",
+                "lap_time_ms",
+                "sector1_ms",
+                "sector2_ms",
+                "sector3_ms",
+                "position",
+                "compound",
+                "tyre_life",
+                "stint",
+                "is_deleted",
+                "team_id",
+                "datastream_metadata"
+            ],
+            "description": "Imported from BigQuery table public_laps"
+        },
+        "public_races": {
+            "columns": [
+                "race_id",
+                "season_id",
+                "circuit_id",
+                "race_name",
+                "race_date",
+                "datastream_metadata"
+            ],
+            "description": "Imported from BigQuery table public_races"
+        },
+        "public_seasons": {
+            "columns": [
+                "season_id",
+                "year",
+                "datastream_metadata"
+            ],
+            "description": "Imported from BigQuery table public_seasons"
+        },
+        "public_session_data_audit": {
+            "columns": [
+                "audit_id",
+                "session_id",
+                "season_year",
+                "race_name",
+                "session_type",
+                "data_status",
+                "missing_fields",
+                "notes",
+                "created_at",
+                "datastream_metadata"
+            ],
+            "description": "Imported from BigQuery table public_session_data_audit"
+        },
+        "public_sessions": {
+            "columns": [
+                "session_id",
+                "race_id",
+                "session_type",
+                "session_date",
+                "datastream_metadata"
+            ],
+            "description": "Imported from BigQuery table public_sessions"
+        }
+    }
+}
