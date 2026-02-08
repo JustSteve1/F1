@@ -1,0 +1,13 @@
+
+# Temporary debug scripts
+debug_vertex_auth.py
+list_models.py
+test_apikey.py
+test_apikey_v2.py
+test_gemini_2_flash.py
+test_logging.py
+test_model_availability.py
+test_upload.txt
+test_zero_copy_pro.py
+trigger_gemini_api_enable.py
+validate_regions.py
