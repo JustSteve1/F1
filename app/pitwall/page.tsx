@@ -1,4 +1,3 @@
-
 import { BigQuery } from '@google-cloud/bigquery';
 import React from 'react';
 import PitwallClient from './pitwall-client';
