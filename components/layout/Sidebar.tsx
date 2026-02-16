@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { Home, User, Settings, LogOut, Factory, Monitor } from "lucide-react";
+import { Home, User, Settings, LogOut, Factory, Monitor, BookOpen } from "lucide-react";
 
 export function Sidebar() {
     return (
-        <div className="hidden h-screen w-16 flex-col items-center justify-between border-r border-white/10 bg-black py-4 md:flex">
+        <div className="flex h-full w-16 flex-col items-center justify-between py-4">
             <div className="flex flex-col items-center gap-4">
                 <div className="flex h-10 w-10 items-center justify-center rounded-sm bg-white text-black font-black tracking-tighter text-xl">
                     F1
@@ -24,18 +24,25 @@ export function Sidebar() {
                         <span className="sr-only">Profile</span>
                     </Link>
                     <Link
-                        href="/userfactory"
+                        href="/frontend/userfactory"
                         className="flex h-10 w-10 items-center justify-center rounded-sm text-white/50 transition-colors hover:bg-white/10 hover:text-white"
                     >
                         <Factory className="h-5 w-5" />
                         <span className="sr-only">Factory</span>
                     </Link>
                     <Link
-                        href="/userpitwall"
+                        href="/frontend/userpitwall"
                         className="flex h-10 w-10 items-center justify-center rounded-sm text-white/50 transition-colors hover:bg-white/10 hover:text-white"
                     >
                         <Monitor className="h-5 w-5" />
                         <span className="sr-only">Pitwall</span>
+                    </Link>
+                    <Link
+                        href="/frontend/userpaddock"
+                        className="flex h-10 w-10 items-center justify-center rounded-sm text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+                    >
+                        <BookOpen className="h-5 w-5" />
+                        <span className="sr-only">Paddock</span>
                     </Link>
                     <Link
                         href="/settings"

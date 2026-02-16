@@ -4,13 +4,15 @@ import { Sidebar } from "./Sidebar";
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
     return (
-        <div className="flex min-h-screen bg-black text-white">
+        <div className="flex h-screen overflow-hidden bg-black text-white">
             {/* Sidebar - Hidden on mobile, visible on desktop */}
-            <Sidebar />
+            <aside className="hidden md:flex flex-col border-r border-white/10 bg-black">
+                <Sidebar />
+            </aside>
 
             {/* Main Content Area */}
-            <main className="flex-1 p-4 md:p-8 overflow-y-auto">
-                <div className="mx-auto max-w-7xl h-full flex flex-col justify-center">
+            <main className="flex-1 overflow-y-auto p-4 md:p-8 scrollbar-hide">
+                <div className="mx-auto max-w-7xl">
                     {children}
                 </div>
             </main>

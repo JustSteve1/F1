@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { DashboardGrid } from "@/components/profile/DashboardGrid";
+import { DashboardShell } from "@/components/layout/DashboardShell";
 import { Loader2 } from "lucide-react";
 
 export default function ProfilePage() {
@@ -28,5 +29,9 @@ export default function ProfilePage() {
         return null;
     }
 
-    return <DashboardGrid />;
+    return (
+        <DashboardShell>
+            <DashboardGrid />
+        </DashboardShell>
+    );
 }

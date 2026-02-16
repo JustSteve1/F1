@@ -21,7 +21,7 @@ export default function Header() {
                     <Link href="/about" className="text-sm font-medium text-white/70 hover:text-white transition-colors">
                         About
                     </Link>
-                    <Link href="/latest" className="text-sm font-medium text-white/70 hover:text-white transition-colors">
+                    <Link href="/frontend/userpaddock" className="text-sm font-medium text-white/70 hover:text-white transition-colors">
                         Latest
                     </Link>
                     {user ? (
@@ -74,7 +74,7 @@ export default function Header() {
                         About
                     </Link>
                     <Link
-                        href="/latest"
+                        href="/frontend/userpaddock"
                         className="text-lg font-medium text-white/70 hover:text-white"
                         onClick={() => setMobileMenuOpen(false)}
                     >

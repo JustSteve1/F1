@@ -10,9 +10,10 @@ export default function SignupPage() {
     const [password, setPassword] = useState("");
     const [name, setName] = useState("");
     const [error, setError] = useState("");
+    const [success, setSuccess] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    const { signup } = useAuth();
+    const { signup, logOut } = useAuth(); // Import logOut
     const router = useRouter();
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -20,15 +21,64 @@ export default function SignupPage() {
         setError("");
         setIsSubmitting(true);
 
+        // Validation
+        if (!name.trim()) {
+            setError("Name is required");
+            setIsSubmitting(false);
+            return;
+        }
+
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            setError("Please enter a valid email address");
+            setIsSubmitting(false);
+            return;
+        }
+
+        if (password.length < 8) {
+            setError("Password must be at least 8 characters long");
+            setIsSubmitting(false);
+            return;
+        }
+
         try {
             await signup(email, password, name);
-            router.push("/profile");
+
+            // Send Notification Email (Fire and forget, or await if critical)
+            await fetch('/api/signup-notify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, email }),
+            });
+
+            // Show success message
+            setSuccess(true);
+
+            // Sign out immediately so they aren't logged in
+            await logOut();
+
+            // Redirect to home after a delay
+            setTimeout(() => {
+                router.push("/");
+            }, 3000);
+
         } catch (err: any) {
             setError(err.message || "Failed to create an account");
-        } finally {
-            setIsSubmitting(false);
+            setIsSubmitting(false); // Only stop submitting on error
         }
     };
+
+    if (success) {
+        return (
+            <div className="flex min-h-screen flex-col justify-center items-center bg-black px-6 py-12 lg:px-8">
+                <div className="text-center space-y-4">
+                    <h2 className="text-3xl font-light text-white">Thank you</h2>
+                    <p className="text-white/60">Please check your email.</p>
+                    <p className="text-xs text-white/30 pt-8">Redirecting to home...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="flex min-h-screen flex-col justify-center bg-black px-6 py-12 lg:px-8">
@@ -45,7 +95,7 @@ export default function SignupPage() {
                 <form className="space-y-6" onSubmit={handleSubmit}>
                     <div>
                         <label htmlFor="name" className="block text-sm font-medium leading-6 text-white/80">
-                            Display Name
+                            Name
                         </label>
                         <div className="mt-2">
                             <input
@@ -54,6 +104,7 @@ export default function SignupPage() {
                                 type="text"
                                 autoComplete="name"
                                 required
+                                placeholder="Your full name"
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
                                 className="block w-full rounded-md border-0 bg-white/5 py-1.5 text-white shadow-sm ring-1 ring-inset ring-white/10 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm sm:leading-6 pl-3"
@@ -72,6 +123,7 @@ export default function SignupPage() {
                                 type="email"
                                 autoComplete="email"
                                 required
+                                placeholder="you@example.com"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
                                 className="block w-full rounded-md border-0 bg-white/5 py-1.5 text-white shadow-sm ring-1 ring-inset ring-white/10 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm sm:leading-6 pl-3"
@@ -92,6 +144,7 @@ export default function SignupPage() {
                                 type="password"
                                 autoComplete="new-password"
                                 required
+                                placeholder="Min 8 characters"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
                                 className="block w-full rounded-md border-0 bg-white/5 py-1.5 text-white shadow-sm ring-1 ring-inset ring-white/10 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm sm:leading-6 pl-3"
@@ -100,7 +153,7 @@ export default function SignupPage() {
                     </div>
 
                     {error && (
-                        <div className="text-red-500 text-sm text-center">
+                        <div className="rounded-md bg-red-500/10 p-3 text-sm text-red-500 text-center border border-red-500/20">
                             {error}
                         </div>
                     )}
@@ -109,7 +162,7 @@ export default function SignupPage() {
                         <button
                             type="submit"
                             disabled={isSubmitting}
-                            className="flex w-full justify-center rounded-md bg-white/10 px-3 py-1.5 text-sm font-semibold leading-6 text-white shadow-sm hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            className="flex w-full justify-center rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-semibold leading-6 text-white shadow-sm hover:bg-indigo-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                         >
                             {isSubmitting ? "Creating account..." : "Sign up"}
                         </button>
