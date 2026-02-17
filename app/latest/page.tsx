@@ -81,7 +81,7 @@ export default function LatestPage() {
                                     {/* Placeholder for image - using a div for now if image fails, or the actual image component */}
                                     {/* <Image src={article.image} fill className="object-cover grayscale contrast-125 group-hover:scale-105 transition-transform duration-700" alt={article.title} /> */}
                                     <div className="absolute inset-0 flex items-center justify-center text-white/10 text-4xl font-black uppercase tracking-tighter">
-                                        InPlay Image
+                                        Interval.ai Image
                                     </div>
                                 </div>
 

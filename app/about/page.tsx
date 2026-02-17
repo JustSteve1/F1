@@ -28,92 +28,60 @@ export default function AboutPage() {
             <main className="relative z-10 max-w-2xl mx-auto px-6 py-32 md:py-48 flex flex-col items-start">
 
                 {/* Hero Statement */}
-                <h1 className="font-serif text-5xl md:text-7xl lg:text-8xl font-medium leading-[0.9] tracking-tight mb-24 md:mb-32">
-                    Sport was never meant to be <span className="text-white/40">watched.</span><br />
-                    It was meant to be <span className="italic">lived.</span>
+                <h1 className="font-serif text-5xl md:text-7xl lg:text-8xl font-medium leading-[0.9] tracking-tight mb-12 md:mb-16">
+                    You took the call.<br />
+                    You owned the <span className="text-white/40">outcome.</span>
                 </h1>
 
+                <p className="font-serif text-2xl md:text-3xl lg:text-4xl text-white/80 mb-24 md:mb-32 max-w-3xl leading-tight">
+                    Sport was never meant to be watched.<br />
+                    It was meant to be <span className="italic text-indigo-400">played.</span>
+                </p>
+
                 {/* Narrative Flow */}
-                <div className="space-y-24 md:space-y-32 text-lg md:text-xl leading-relaxed text-white/80 font-light">
+                <div className="space-y-16 md:space-y-24 text-lg md:text-xl leading-relaxed text-white/80 font-light max-w-2xl">
 
                     <p>
-                        For decades, fans have sat behind the screen — watching decisions unfold, feeling the tension, imagining what they would do differently. But the screen was always a barrier. You could see everything. You could influence nothing.
+                        For decades the screen gave you everything — the tension, the data, the moment — and then took the only thing that mattered away from you. The decision. That always belonged to the team.
                     </p>
 
                     <div className="pl-6 border-l-2 border-white/20">
                         <p className="font-serif text-3xl md:text-4xl text-white">
-                            That era is ending.
+                            Not anymore.
                         </p>
                     </div>
 
                     <p>
-                        A new layer of sport is emerging. One where every lap, every input, every moment of intent becomes something you can explore. Not as a spectator, but as a participant. Not as a viewer, but as part of the system itself.
+                        Every lap has micro-decision points buried inside it. A pit window opened and closed. A tire pushed one lap too far, or pulled one lap too early. A gap on the timing screen that told the whole story — if you knew how to read it.
+                    </p>
+
+                    <p>
+                        You watched these decisions happen. You saw the outcomes play out. What we built is the space between the two — where you stand at the pitwall with the same data at your fingertips, in the same moment, and make the call yourself.
                     </p>
 
                     <div className="space-y-8">
-                        <p>
-                            Because sport is not just motion.<br />
-                            It’s intent, expressed through action.
+                        <p className="font-bold text-white text-2xl">
+                            Not a simulation. Not fantasy. The real race, frozen at the moment of consequence.
                         </p>
-                        <ul className="space-y-4 text-white/60">
-                            <li className="flex items-center gap-4">
-                                <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full" />
-                                The braking point chosen under pressure.
-                            </li>
-                            <li className="flex items-center gap-4">
-                                <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full" />
-                                The line held when everything is on the limit.
-                            </li>
-                            <li className="flex items-center gap-4">
-                                <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full" />
-                                The difference between hesitation and commitment — measured in thousandths of a second.
-                            </li>
-                        </ul>
                     </div>
 
-                    <div className="pl-6 border-l-2 border-indigo-500/50">
-                        <p className="font-serif text-2xl md:text-3xl italic text-white/90">
-                            These moments have always existed. Now, they’re visible.
+                    <div className="text-left w-full py-8">
+                        <p className="font-serif text-4xl md:text-5xl leading-tight text-white mb-4">
+                            You decide.<br />
+                            <span className="text-white/40">Then reality plays out.</span>
                         </p>
                     </div>
 
                     <p>
-                        We’ve built a platform that allows you to step inside performance — to move beyond watching outcomes and into understanding decisions. To compare, explore, and interact with the invisible structure beneath the sport you love.
+                        That gap — between your instinct and the truth — is where everything lives. It&apos;s where you learn how the fastest sport on earth actually thinks. Where data stops being numbers on a screen and becomes the difference between a championship and a footnote.
                     </p>
 
-                    <div className="text-center w-full py-12">
-                        <p className="font-serif text-4xl md:text-5xl leading-tight">
-                            You don’t just see what happened.<br />
-                            <span className="text-indigo-400">You see why.</span>
-                        </p>
-                    </div>
-
-                    <p>
-                        And when you can see intent, everything changes.
-                    </p>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 border-t border-b border-white/10 py-12">
-                        <div className="font-mono text-xs uppercase tracking-widest text-white/40">The Future of Sport</div>
-                        <div className="space-y-2 font-serif text-2xl">
-                            <div className="text-white/40">Is not passive.</div>
-                            <div className="text-white">It’s interactive.</div>
-                            <div className="text-white">It’s measurable.</div>
-                            <div className="text-indigo-400">It’s personal.</div>
-                        </div>
-                    </div>
-
-                    <p>
-                        This is where fans become participants.<br />
-                        Where curiosity becomes capability.<br />
-                        Where the distance between watching and doing disappears.
-                    </p>
-
-                    <div className="pt-24 md:pt-32">
+                    <div className="pt-24 md:pt-32 border-t border-white/10">
                         <p className="font-serif text-xl md:text-2xl text-white/50 mb-4">
-                            The screen was the first interface.
+                            This is not the future of watching sport.
                         </p>
-                        <p className="font-serif text-5xl md:text-7xl text-white">
-                            This is the next.
+                        <p className="font-serif text-5xl md:text-6xl text-indigo-400">
+                            It&apos;s the end of watching it.
                         </p>
                     </div>
 

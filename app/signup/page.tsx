@@ -4,12 +4,15 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 export default function SignupPage() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [name, setName] = useState("");
-    const [error, setError] = useState("");
+    const [referralCode, setReferralCode] = useState("");
+    const [error, setError] = useState<React.ReactNode>(""); // Changed to ReactNode to support links
     const [success, setSuccess] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -37,6 +40,41 @@ export default function SignupPage() {
 
         if (password.length < 8) {
             setError("Password must be at least 8 characters long");
+            setIsSubmitting(false);
+            return;
+        }
+
+        // Referral Code Validation
+        try {
+            if (!referralCode.trim()) {
+                setError("Referral code is required");
+                setIsSubmitting(false);
+                return;
+            }
+
+            const referralRef = doc(db, "referralCodes", referralCode.trim());
+            const referralSnap = await getDoc(referralRef);
+
+            if (!referralSnap.exists() || !referralSnap.data().active) {
+                setError(
+                    <span>
+                        Error validating referral code.{" "}
+                        <a
+                            href="https://www.linkedin.com/in/steve-fortuin-2974a726/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline hover:text-white transition-colors"
+                        >
+                            Contact us
+                        </a>
+                    </span>
+                );
+                setIsSubmitting(false);
+                return;
+            }
+        } catch (err) {
+            console.error("Referral validation error:", err);
+            setError("Error validating referral code");
             setIsSubmitting(false);
             return;
         }
@@ -84,7 +122,7 @@ export default function SignupPage() {
         <div className="flex min-h-screen flex-col justify-center bg-black px-6 py-12 lg:px-8">
             <div className="sm:mx-auto sm:w-full sm:max-w-sm">
                 <h2 className="mt-10 text-center text-2xl font-light tracking-tight text-white">
-                    Join InPlay
+                    Join Interval.ai
                 </h2>
                 <p className="mt-2 text-center text-sm text-white/50">
                     Create your account to get started
@@ -147,6 +185,24 @@ export default function SignupPage() {
                                 placeholder="Min 8 characters"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
+                                className="block w-full rounded-md border-0 bg-white/5 py-1.5 text-white shadow-sm ring-1 ring-inset ring-white/10 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm sm:leading-6 pl-3"
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <label htmlFor="referralCode" className="block text-sm font-medium leading-6 text-white/80">
+                            Referral Code
+                        </label>
+                        <div className="mt-2">
+                            <input
+                                id="referralCode"
+                                name="referralCode"
+                                type="text"
+                                required
+                                placeholder="Enter your referral code"
+                                value={referralCode}
+                                onChange={(e) => setReferralCode(e.target.value)}
                                 className="block w-full rounded-md border-0 bg-white/5 py-1.5 text-white shadow-sm ring-1 ring-inset ring-white/10 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-500 sm:text-sm sm:leading-6 pl-3"
                             />
                         </div>

@@ -43,7 +43,7 @@ export default function LoginPage() {
         <div className="flex min-h-screen flex-col justify-center bg-black px-6 py-12 lg:px-8">
             <div className="sm:mx-auto sm:w-full sm:max-w-sm">
                 <h2 className="mt-10 text-center text-2xl font-light tracking-tight text-white">
-                    Sign in to InPlay
+                    Sign in to Interval.ai
                 </h2>
                 <p className="mt-2 text-center text-sm text-white/50">
                     Welcome back

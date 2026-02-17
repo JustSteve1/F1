@@ -13,7 +13,7 @@ export default function Header() {
             <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
                 {/* Logo */}
                 <Link href="/" className="text-2xl font-bold tracking-tighter text-white">
-                    InPlay
+                    Interval.ai
                 </Link>
 
                 {/* Desktop Nav */}
@@ -21,22 +21,22 @@ export default function Header() {
                     <Link href="/about" className="text-sm font-medium text-white/70 hover:text-white transition-colors">
                         About
                     </Link>
-                    <Link href="/frontend/userpaddock" className="text-sm font-medium text-white/70 hover:text-white transition-colors">
-                        Latest
+                    <Link href="https://www.linkedin.com/in/steve-fortuin-2974a726/" target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-white/70 hover:text-white transition-colors">
+                        Team
                     </Link>
                     {user ? (
                         <Link
                             href="/profile"
                             className="text-sm font-medium text-white hover:text-white/80 transition-colors"
                         >
-                            Profile
+                            Sign-In
                         </Link>
                     ) : (
                         <Link
                             href="/login"
                             className="rounded-full bg-white px-4 py-1.5 text-sm font-semibold text-black hover:bg-white/90 transition-colors"
                         >
-                            Sign In
+                            Sign-In
                         </Link>
                     )}
                 </nav>
@@ -74,11 +74,13 @@ export default function Header() {
                         About
                     </Link>
                     <Link
-                        href="/frontend/userpaddock"
+                        href="https://www.linkedin.com/in/steve-fortuin-2974a726/"
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="text-lg font-medium text-white/70 hover:text-white"
                         onClick={() => setMobileMenuOpen(false)}
                     >
-                        Latest
+                        Team
                     </Link>
                     {user ? (
                         <Link
@@ -86,7 +88,7 @@ export default function Header() {
                             className="text-lg font-medium text-white"
                             onClick={() => setMobileMenuOpen(false)}
                         >
-                            Profile
+                            Sign-In
                         </Link>
                     ) : (
                         <Link
@@ -94,7 +96,7 @@ export default function Header() {
                             className="text-lg font-medium text-white"
                             onClick={() => setMobileMenuOpen(false)}
                         >
-                            Sign In
+                            Sign-In
                         </Link>
                     )}
                 </div>

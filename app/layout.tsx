@@ -18,7 +18,7 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "InPlay - Your Journey Starts here",
+  title: "Interval.ai - Your Journey Starts here",
   description: "The future of F1 interaction",
 };
 
