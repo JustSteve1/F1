@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Home, User, Settings, LogOut, Factory, Monitor, BookOpen } from "lucide-react";
+import { Home, User, Settings, Factory, Monitor, BookOpen, ListTodo } from "lucide-react";
 
 export function Sidebar() {
     return (
@@ -45,11 +45,18 @@ export function Sidebar() {
                         <span className="sr-only">Paddock</span>
                     </Link>
                     <Link
-                        href="/settings"
+                        href="/admin"
                         className="flex h-10 w-10 items-center justify-center rounded-sm text-white/50 transition-colors hover:bg-white/10 hover:text-white"
                     >
                         <Settings className="h-5 w-5" />
-                        <span className="sr-only">Settings</span>
+                        <span className="sr-only">Admin</span>
+                    </Link>
+                    <Link
+                        href="/admin/jobs"
+                        className="flex h-10 w-10 items-center justify-center rounded-sm text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+                    >
+                        <ListTodo className="h-5 w-5" />
+                        <span className="sr-only">Jobs</span>
                     </Link>
                 </nav>
             </div>

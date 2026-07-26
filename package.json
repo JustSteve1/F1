@@ -6,16 +6,20 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:up": "docker compose up -d postgres",
+    "db:migrate": "psql \"$DATABASE_URL\" -f db/migrations/001_jobs.sql"
   },
   "dependencies": {
     "@google-cloud/bigquery": "^8.1.1",
     "clsx": "^2.1.1",
     "firebase": "^12.9.0",
+    "google-auth-library": "^10.9.1",
     "lucide-react": "^0.564.0",
     "next": "16.1.6",
     "next-themes": "^0.4.6",
     "nodemailer": "^8.0.1",
+    "pg": "^8.22.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "tailwind-merge": "^3.4.1"
@@ -24,6 +28,7 @@
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/nodemailer": "^7.0.10",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",

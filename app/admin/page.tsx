@@ -111,6 +111,12 @@ export default function AdminPage() {
                 <header className="border-b border-white/10 pb-8">
                     <h1 className="text-3xl font-bold tracking-tighter mb-2">Admin: Referral Codes</h1>
                     <p className="text-white/50">Manage access codes for user registration.</p>
+                    <a
+                        href="/admin/jobs"
+                        className="inline-block mt-3 text-xs font-bold uppercase tracking-widest text-[#2596be] hover:underline"
+                    >
+                        → Telemetry import jobs
+                    </a>
                 </header>
 
                 <section className="bg-white/5 p-6 rounded-lg border border-white/10">

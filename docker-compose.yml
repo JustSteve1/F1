@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: interval
+      POSTGRES_PASSWORD: interval
+      POSTGRES_DB: interval_jobs
+    volumes:
+      - interval_pg:/var/lib/postgresql/data
+      - ./db/migrations/001_jobs.sql:/docker-entrypoint-initdb.d/001_jobs.sql:ro
+
+volumes:
+  interval_pg:

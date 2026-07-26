@@ -1,0 +1,47 @@
+import { NextResponse } from "next/server";
+import { createJob, listJobs, parseJobParams } from "@/lib/jobs/queries";
+import { triggerWorker } from "@/lib/jobs/cloud-run";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET() {
+  try {
+    const jobs = await listJobs(100);
+    return NextResponse.json({ jobs });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to list jobs";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const params = parseJobParams(body);
+    const job = await createJob(params);
+
+    try {
+      await triggerWorker(job.id);
+    } catch (triggerErr) {
+      const message =
+        triggerErr instanceof Error
+          ? triggerErr.message
+          : "Failed to trigger worker";
+      // Job row exists; surface trigger failure without losing the create.
+      return NextResponse.json(
+        {
+          job,
+          warning: `Job created but worker trigger failed: ${message}`,
+        },
+        { status: 201 },
+      );
+    }
+
+    return NextResponse.json({ job }, { status: 201 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to create job";
+    const status = message.toLowerCase().includes("required") ? 400 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
+}
