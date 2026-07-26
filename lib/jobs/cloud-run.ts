@@ -1,4 +1,4 @@
-import { GoogleAuth } from "google-auth-library";
+import { GoogleAuth, type JWTInput } from "google-auth-library";
 import { appendJobLog, setCloudRunExecution } from "./queries";
 
 export type WorkerMode = "cloud_run" | "stub" | "local";
@@ -10,8 +10,45 @@ export function getWorkerMode(): WorkerMode {
 }
 
 /**
+ * Resolve GCP credentials for Cloud Run Jobs triggers.
+ *
+ * Priority:
+ * 1. GOOGLE_SERVICE_ACCOUNT_KEY — full JSON key string (Vercel-friendly)
+ * 2. GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY — split env vars
+ * 3. GOOGLE_APPLICATION_CREDENTIALS / ADC — local path or ambient credentials
+ */
+function getGoogleAuth(): GoogleAuth {
+  const scopes = ["https://www.googleapis.com/auth/cloud-platform"];
+  const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY?.trim();
+  if (keyJson) {
+    let credentials: JWTInput;
+    try {
+      credentials = JSON.parse(keyJson) as JWTInput;
+    } catch {
+      throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY must be valid JSON");
+    }
+    return new GoogleAuth({ credentials, scopes });
+  }
+
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim();
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  if (email && privateKey) {
+    return new GoogleAuth({
+      credentials: {
+        client_email: email,
+        private_key: privateKey,
+      },
+      scopes,
+    });
+  }
+
+  // Falls back to GOOGLE_APPLICATION_CREDENTIALS path or ambient ADC.
+  return new GoogleAuth({ scopes });
+}
+
+/**
  * Trigger the Cloud Run Job execution for a queued job.
- * Uses ADC / service account credentials available to the Next.js runtime.
+ * Uses JSON key env vars (Vercel) or ADC / key file (local).
  */
 export async function triggerCloudRunJob(jobId: string): Promise<string> {
   const project = process.env.GCP_PROJECT_ID;
@@ -22,9 +59,7 @@ export async function triggerCloudRunJob(jobId: string): Promise<string> {
     throw new Error("GCP_PROJECT_ID is required for cloud_run worker mode");
   }
 
-  const auth = new GoogleAuth({
-    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-  });
+  const auth = getGoogleAuth();
   const client = await auth.getClient();
   const token = await client.getAccessToken();
   if (!token.token) {
