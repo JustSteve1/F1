@@ -82,12 +82,20 @@ export default function AdminJobDetailPage() {
               Admin · Job detail
             </p>
           </div>
-          <Link
-            href="/admin/jobs"
-            className="text-xs text-white/50 hover:text-white transition-colors"
-          >
-            ← All jobs
-          </Link>
+          <div className="flex items-center gap-4 text-xs">
+            <Link
+              href="/admin/pipeline"
+              className="text-white/50 hover:text-white transition-colors"
+            >
+              How the pipeline works
+            </Link>
+            <Link
+              href="/admin/jobs"
+              className="text-white/50 hover:text-white transition-colors"
+            >
+              ← All jobs
+            </Link>
+          </div>
         </div>
       </header>
 

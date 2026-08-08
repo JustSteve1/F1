@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { StatusBadge } from "./StatusBadge";
+import { PipelineFlow } from "@/components/admin/pipeline/PipelineFlow";
+import { StepPanel } from "@/components/admin/pipeline/StepPanel";
+import { guideForKey } from "@/lib/jobs/pipeline-guide";
 import type { JobDetail as JobDetailType } from "@/lib/jobs/types";
-import { PIPELINE_STEPS } from "@/lib/jobs/steps";
-
-const STEP_LABELS = Object.fromEntries(
-  PIPELINE_STEPS.map((s) => [s.key, s.label]),
-);
 
 export function JobDetail({
   job,
@@ -21,11 +19,38 @@ export function JobDetail({
   busy?: boolean;
 }) {
   const logRef = useRef<HTMLDivElement>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [userPicked, setUserPicked] = useState(false);
 
   useEffect(() => {
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [job.logs]);
+
+  // Reset follow-mode when switching jobs
+  useEffect(() => {
+    setUserPicked(false);
+  }, [job.id]);
+
+  // Follow the running step until the user picks one
+  useEffect(() => {
+    if (userPicked) return;
+    const next =
+      job.current_step ||
+      job.steps.find((s) => s.status === "running")?.step_key ||
+      job.steps[0]?.step_key ||
+      null;
+    if (next) setSelectedKey(next);
+  }, [job.current_step, job.steps, userPicked]);
+
+  const selectedGuide = useMemo(
+    () => (selectedKey ? guideForKey(selectedKey) : undefined),
+    [selectedKey],
+  );
+  const selectedLive = useMemo(
+    () => job.steps.find((s) => s.step_key === selectedKey) ?? null,
+    [job.steps, selectedKey],
+  );
 
   const canCancel = job.status === "queued" || job.status === "running";
   const canRetry = job.status === "failed" || job.status === "cancelled";
@@ -83,25 +108,29 @@ export function JobDetail({
         </div>
       </div>
 
-      <div className="border border-white/10 p-5">
-        <h3 className="text-[11px] font-bold uppercase tracking-widest text-white/50 mb-4">
-          Step timeline
-        </h3>
-        <ol className="space-y-3">
-          {job.steps.map((step) => (
-            <li key={step.id} className="flex items-start gap-3">
-              <StatusBadge status={step.status} className="mt-0.5 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-white">
-                  {STEP_LABELS[step.step_key] || step.step_key}
-                </p>
-                {step.message && (
-                  <p className="text-xs text-white/45">{step.message}</p>
-                )}
-              </div>
-            </li>
-          ))}
-        </ol>
+      <div className="border border-white/10 p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-[11px] font-bold uppercase tracking-widest text-white/50">
+            Pipeline flow
+          </h3>
+          <p className="text-[10px] text-white/30 uppercase tracking-widest">
+            Click a step for notebook mapping
+          </p>
+        </div>
+        <PipelineFlow
+          mode="live"
+          includeBookends
+          steps={job.steps}
+          currentStep={job.current_step}
+          selectedKey={selectedKey}
+          onSelect={(key) => {
+            setUserPicked(true);
+            setSelectedKey(key);
+          }}
+        />
+        {selectedGuide && (
+          <StepPanel guide={selectedGuide} liveStep={selectedLive} />
+        )}
       </div>
 
       <div className="border border-white/10">

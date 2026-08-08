@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { PipelineFlow } from "@/components/admin/pipeline/PipelineFlow";
 import { SESSION_TYPES, type SessionType } from "@/lib/jobs/steps";
 
 type Props = {
@@ -148,6 +149,25 @@ export function CreateJobForm({ onCreated }: Props) {
           label="Include Kaggle upload"
           checked={includeKaggle}
           onChange={setIncludeKaggle}
+        />
+      </div>
+
+      <div className="space-y-2 border border-white/10 px-3 py-3">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">
+          Steps that will run
+        </p>
+        <PipelineFlow
+          mode="preview"
+          includeBookends
+          params={{
+            skipQuality,
+            skipUnified,
+            includeKaggle,
+            years: [2025],
+            race: race || "—",
+            sessions,
+            noSkip,
+          }}
         />
       </div>
 

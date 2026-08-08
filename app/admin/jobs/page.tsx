@@ -55,6 +55,12 @@ export default function AdminJobsPage() {
             >
               Referral admin
             </Link>
+            <Link
+              href="/admin/pipeline"
+              className="text-white/50 hover:text-white transition-colors"
+            >
+              How the pipeline works
+            </Link>
             <span className="text-[#2596be] font-bold uppercase tracking-widest">
               Pipeline jobs
             </span>

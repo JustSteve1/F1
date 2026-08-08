@@ -1,0 +1,265 @@
+import { PIPELINE_STEPS, type StepKey } from "./steps";
+
+export type SampleTable = {
+  columns: string[];
+  rows: (string | number | boolean | null)[][];
+};
+
+export type PipelineGuideStep = {
+  key: StepKey;
+  label: string;
+  notebookCell: string | null;
+  short: string;
+  detail: string;
+  writes: string[];
+  inputs: string[];
+  outputs: string[];
+  sample: SampleTable | null;
+};
+
+/** Prelude shown on the explainer (notebook Cells 0–1), not a job step. */
+export const PIPELINE_PRELUDE = {
+  notebookCell: "Cells 0–1",
+  title: "Select & configure",
+  short: "Choose years, race, sessions, and skip-existing behavior.",
+  detail:
+    "The Colab notebook uses widgets to pick years (2018+), an event name, session types (FP1…R), and whether to skip data already in BigQuery. The jobs admin form is the same gate: params become JobParams before the worker runs.",
+  demoConfig: {
+    years: [2025],
+    race: "Australian Grand Prix",
+    sessions: ["R"] as const,
+    skipExisting: true,
+  },
+};
+
+export const PIPELINE_GUIDE: Record<StepKey, PipelineGuideStep> = {
+  queued: {
+    key: "queued",
+    label: "Queued",
+    notebookCell: null,
+    short: "Job accepted; waiting for the worker.",
+    detail:
+      "The control plane writes the job and step rows to Postgres, then triggers Cloud Run (or the local stub). No FastF1 or BigQuery work yet.",
+    writes: [],
+    inputs: ["JobParams (years, race, sessions, flags)"],
+    outputs: ["Job row in Postgres", "Pending step timeline"],
+    sample: {
+      columns: ["field", "value"],
+      rows: [
+        ["status", "queued"],
+        ["race", "Australian Grand Prix"],
+        ["years", "2025"],
+        ["sessions", "R"],
+      ],
+    },
+  },
+  load_fastf1: {
+    key: "load_fastf1",
+    label: "Load FastF1",
+    notebookCell: "Cell 2",
+    short: "Download session telemetry and laps from FastF1.",
+    detail:
+      "For each year × session, call fastf1.get_session and load telemetry + laps. Sessions already present in BigQuery are skipped when skip-existing is on. Invalid or empty events are dropped.",
+    writes: [],
+    inputs: ["Year", "Event name", "Session type"],
+    outputs: ["In-memory FastF1 Session objects"],
+    sample: {
+      columns: ["year", "session", "event", "drivers", "laps"],
+      rows: [[2025, "R", "Australian Grand Prix", 20, 1142]],
+    },
+  },
+  resample_telemetry: {
+    key: "resample_telemetry",
+    label: "Resample telemetry",
+    notebookCell: "Cell 3",
+    short: "Nearest-neighbor resample to 10 Hz (0.1 s).",
+    detail:
+      "For each lap, pick the closest FastF1 sample to every 0.1 s tick. Captures speed, throttle, brake, gear, RPM, DRS, XYZ, deceleration, and distance. Dedupes on season/session/driver/lap/lap_time_sec.",
+    writes: [],
+    inputs: ["Per-lap FastF1 telemetry"],
+    outputs: ["telemetry_df (10 Hz points)", "Thin laps_df metadata"],
+    sample: {
+      columns: [
+        "driver",
+        "lap",
+        "t_sec",
+        "speed",
+        "throttle",
+        "brake",
+        "gear",
+        "x",
+        "y",
+      ],
+      rows: [
+        ["1", 12, 0.0, 298.1, 100, false, 8, 412.3, -180.2],
+        ["1", 12, 0.1, 301.4, 100, false, 8, 428.7, -175.1],
+        ["1", 12, 0.2, 304.0, 98, false, 8, 445.0, -169.8],
+        ["1", 12, 0.3, 288.2, 20, true, 7, 460.1, -164.0],
+        ["1", 12, 0.4, 265.5, 0, true, 6, 473.8, -158.6],
+      ],
+    },
+  },
+  upload_sessions_laps: {
+    key: "upload_sessions_laps",
+    label: "Upload sessions & laps",
+    notebookCell: "Cell 4",
+    short: "Insert session and lap rows into BigQuery.",
+    detail:
+      "session_key is derived from MD5(year-race-session) truncated to 8 hex digits. Sessions and lap metadata (sectors, compound, tyre age, stint) are inserted first so telemetry can join on session_key.",
+    writes: ["sessions", "laps"],
+    inputs: ["Loaded sessions", "laps_df"],
+    outputs: ["sessions rows", "laps rows", "session_key"],
+    sample: {
+      columns: ["session_key", "season", "event_name", "session_type", "laps"],
+      rows: [[2847192031, 2025, "Australian Grand Prix", "R", 1142]],
+    },
+  },
+  upload_telemetry: {
+    key: "upload_telemetry",
+    label: "Upload telemetry",
+    notebookCell: "Cell 5",
+    short: "Batch-insert 10 Hz points into telemetry.",
+    detail:
+      "Adds session_key/meeting_key and import timestamps, coerces NaN to null, and uploads in ~1000-row batches via insert_rows_json into f1_data_library_DS.telemetry.",
+    writes: ["telemetry"],
+    inputs: ["Resampled telemetry_df"],
+    outputs: ["telemetry rows in BigQuery"],
+    sample: {
+      columns: [
+        "session_key",
+        "driver_number",
+        "lap_number",
+        "lap_time_sec",
+        "speed",
+        "interval_sec",
+      ],
+      rows: [
+        [2847192031, "1", 12, 0.0, 298.1, 0.1],
+        [2847192031, "1", 12, 0.1, 301.4, 0.1],
+        [2847192031, "1", 12, 0.2, 304.0, 0.1],
+      ],
+    },
+  },
+  verify: {
+    key: "verify",
+    label: "Verify upload",
+    notebookCell: "Cell 6",
+    short: "Sanity-check counts, nulls, and XYZ coverage.",
+    detail:
+      "Queries telemetry/sessions/laps for the event: point counts, drivers, unique laps, null rates, duplicate keys. Notebook also plots racing lines and a sample lap; the worker logs verification summaries.",
+    writes: [],
+    inputs: ["telemetry", "sessions", "laps"],
+    outputs: ["Verification summary", "Quality signals"],
+    sample: {
+      columns: [
+        "session_type",
+        "total_points",
+        "drivers",
+        "unique_laps",
+        "xyz_pct",
+      ],
+      rows: [["R", 842_150, 20, 1142, 98.4]],
+    },
+  },
+  quality_checks: {
+    key: "quality_checks",
+    label: "Quality checks",
+    notebookCell: "Cells 7–8",
+    short: "Enrich laps and flag data-quality exceptions.",
+    detail:
+      "Cell 7 re-extracts rich FastF1 lap fields (driver code, team, pits, speed traps, deleted flags) into laps. Cell 8 validates missing data, invalid lap times, telemetry gaps, and sequence holes, writing exceptions for review.",
+    writes: ["laps", "data_quality_exceptions"],
+    inputs: ["FastF1 laps", "telemetry", "laps"],
+    outputs: ["Enriched laps", "Exception report"],
+    sample: {
+      columns: [
+        "severity",
+        "category",
+        "driver_number",
+        "lap_number",
+        "issue_type",
+      ],
+      rows: [
+        ["warning", "missing_data", "44", 3, "missing_sectors"],
+        ["critical", "missing_telemetry", "11", 18, "no_telemetry"],
+        ["warning", "missing_laps", "16", 0, "gap 14→16"],
+      ],
+    },
+  },
+  laps_unified: {
+    key: "laps_unified",
+    label: "Update laps_unified",
+    notebookCell: "Cell 9",
+    short: "Derive analytics-ready laps from telemetry + laps.",
+    detail:
+      "Joins lap timing (ms), tyre/stint context, speed traps, and telemetry coverage flags. Deletes existing rows for the session_id then appends. Marks laps validated / suspect / legacy by point count.",
+    writes: ["laps_unified"],
+    inputs: ["laps", "telemetry", "circuit_metadata"],
+    outputs: ["laps_unified rows"],
+    sample: {
+      columns: [
+        "session_id",
+        "driver_code",
+        "lap_number",
+        "lap_time_ms",
+        "compound",
+        "data_quality",
+      ],
+      rows: [
+        [2847192031, "VER", 12, 81234, "MEDIUM", "validated"],
+        [2847192031, "NOR", 12, 81302, "MEDIUM", "validated"],
+        [2847192031, "HAM", 3, null, "SOFT", "suspect"],
+      ],
+    },
+  },
+  kaggle_upload: {
+    key: "kaggle_upload",
+    label: "Kaggle upload",
+    notebookCell: null,
+    short: "Optional export from BigQuery to a Kaggle dataset.",
+    detail:
+      "App-only step (not in the Colab notebook). When includeKaggle is set, the worker packages selected tables and pushes them to Kaggle for public/research use.",
+    writes: [],
+    inputs: ["BigQuery dataset slices"],
+    outputs: ["Kaggle dataset revision"],
+    sample: {
+      columns: ["artifact", "status"],
+      rows: [
+        ["telemetry.parquet", "uploaded"],
+        ["laps_unified.csv", "uploaded"],
+      ],
+    },
+  },
+  done: {
+    key: "done",
+    label: "Done",
+    notebookCell: null,
+    short: "Pipeline finished successfully.",
+    detail:
+      "All selected steps completed. Telemetry is queryable in BigQuery and ready for pitwall / ML analysis.",
+    writes: [],
+    inputs: ["Prior step outputs"],
+    outputs: ["Succeeded job status"],
+    sample: {
+      columns: ["metric", "value"],
+      rows: [
+        ["status", "succeeded"],
+        ["progress_pct", 100],
+      ],
+    },
+  },
+};
+
+/** Guide steps in pipeline order (excludes nothing — full rail for explainer). */
+export const PIPELINE_GUIDE_STEPS = PIPELINE_STEPS.map(
+  (s) => PIPELINE_GUIDE[s.key],
+);
+
+/** Visible rail for guide mode: skip pure bookends if desired; keep all for clarity. */
+export const PIPELINE_GUIDE_RAIL = PIPELINE_GUIDE_STEPS.filter(
+  (s) => s.key !== "queued" && s.key !== "done",
+);
+
+export function guideForKey(key: string): PipelineGuideStep | undefined {
+  return PIPELINE_GUIDE[key as StepKey];
+}
