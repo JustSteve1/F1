@@ -231,18 +231,12 @@ async function runStubProgress(jobId: string) {
  */
 export async function triggerLocalWorker(jobId: string): Promise<void> {
   const { spawn } = await import("child_process");
-  const fs = await import("fs");
   const path = await import("path");
 
   const entry = path.join(process.cwd(), "worker", "entrypoint.py");
-  const venvPython = path.join(
-    process.cwd(),
-    "worker",
-    ".venv",
-    "bin",
-    "python",
-  );
-  const pythonBin = fs.existsSync(venvPython) ? venvPython : "python3";
+  // Prefer WORKER_PYTHON. Avoid embedding ".venv" as a literal path segment —
+  // Turbopack tries to resolve it and panics on the venv symlink.
+  const pythonBin = process.env.WORKER_PYTHON || "python3";
 
   await appendJobLog(jobId, `Spawning local worker: ${pythonBin} ${entry}`);
   await setCloudRunExecution(jobId, `local://${process.pid}`);

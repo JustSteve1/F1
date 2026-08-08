@@ -1,0 +1,4 @@
+worker/.venv
+**/__pycache__
+exceptions_*.csv
+.env*.bak
