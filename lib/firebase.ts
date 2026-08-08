@@ -15,27 +15,16 @@ const firebaseConfig = {
 
 const hasConfig = Boolean(firebaseConfig.apiKey);
 
-function getFirebaseApp(): FirebaseApp {
-  if (getApps().length > 0) return getApps()[0]!;
-  if (!hasConfig) {
-    throw new Error(
-      "Firebase is not configured (missing NEXT_PUBLIC_FIREBASE_API_KEY)",
-    );
-  }
-  return initializeApp(firebaseConfig);
-}
-
-// Initialize only when config is present so `next build` prerender can succeed
-// even if env injection is delayed; runtime still requires real keys.
 const app: FirebaseApp | null = hasConfig
   ? getApps().length === 0
     ? initializeApp(firebaseConfig)
     : getApps()[0]!
   : null;
 
-const auth: Auth | null = app ? getAuth(app) : null;
-const db: Firestore | null = app ? getFirestore(app) : null;
+// Cast keeps existing call sites typing clean; AuthContext/admin guard null at runtime.
+const auth = (app ? getAuth(app) : null) as Auth;
+const db = (app ? getFirestore(app) : null) as Firestore;
 const analytics: Analytics | null =
   app && typeof window !== "undefined" ? getAnalytics(app) : null;
 
-export { app, auth, db, analytics, getFirebaseApp };
+export { app, auth, db, analytics };
