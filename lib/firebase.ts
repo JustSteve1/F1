@@ -15,11 +15,22 @@ const firebaseConfig = {
 
 const hasConfig = Boolean(firebaseConfig.apiKey);
 
-const app: FirebaseApp | null = hasConfig
-  ? getApps().length === 0
-    ? initializeApp(firebaseConfig)
-    : getApps()[0]!
-  : null;
+function initFirebaseApp(): FirebaseApp | null {
+  if (!hasConfig) return null;
+  try {
+    if (getApps().length > 0) return getApps()[0]!;
+    return initializeApp(firebaseConfig);
+  } catch (err) {
+    // Invalid/missing keys must not fail `next build` prerender on Vercel.
+    console.warn(
+      "[firebase] init skipped:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+}
+
+const app: FirebaseApp | null = initFirebaseApp();
 
 // Cast keeps existing call sites typing clean; AuthContext/admin guard null at runtime.
 const auth = (app ? getAuth(app) : null) as Auth;
