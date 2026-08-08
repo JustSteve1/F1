@@ -1,4 +1,4 @@
-fastf1>=3.4.0
+fastf1==3.8.3
 google-cloud-bigquery>=3.25.0
 pandas>=2.2.0
 numpy>=1.26.0

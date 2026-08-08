@@ -121,8 +121,58 @@ def check_existing(client, years, race, session_types):
 
 # ── Step 2: Load FastF1 sessions ──────────────────────────────────────────────
 
+def _load_session_with_retries(year, race, stype, attempts=3):
+    """Load a FastF1 session with retries and telemetry fallback."""
+    import time
+
+    last_err = None
+    for attempt in range(1, attempts + 1):
+        try:
+            session = fastf1.get_session(year, race, stype)
+            try:
+                session.load(telemetry=True, laps=True, weather=False)
+            except Exception as tel_err:
+                # Some hosts (e.g. restricted Cloud Run egress) fail car data
+                # but can still load laps; retry laps-only then require telemetry
+                # via get_telemetry later — fail clearly if car data missing.
+                print(
+                    f"  ⚠️  {year} {stype}: telemetry load failed "
+                    f"(attempt {attempt}/{attempts}): {str(tel_err)[:160]}"
+                )
+                session = fastf1.get_session(year, race, stype)
+                session.load(telemetry=False, laps=True, weather=False)
+                # Probe one lap for car telemetry availability
+                if len(session.laps) == 0:
+                    raise RuntimeError("no laps found after laps-only load") from tel_err
+                probe = session.laps.iloc[0]
+                try:
+                    telem = probe.get_telemetry()
+                    if telem is None or len(telem) == 0:
+                        raise RuntimeError(
+                            "telemetry unavailable on this host "
+                            f"(laps loaded but car data empty): {tel_err}"
+                        )
+                except Exception as probe_err:
+                    raise RuntimeError(
+                        "telemetry unavailable on this host "
+                        f"(laps loaded but get_telemetry failed): {probe_err}"
+                    ) from probe_err
+            if len(session.laps) == 0:
+                raise RuntimeError("no laps found")
+            return session
+        except Exception as e:
+            last_err = e
+            msg = str(e)
+            print(f"  ❌  {year} {stype}: attempt {attempt}/{attempts}: {msg[:200]}")
+            if attempt < attempts:
+                time.sleep(2 ** attempt)
+    assert last_err is not None
+    raise last_err
+
+
 def load_sessions(years, race, session_types, skip_existing, existing):
     loaded = {}
+    errors = []
     for year in years:
         for stype in session_types:
             key = (year, stype)
@@ -130,15 +180,21 @@ def load_sessions(years, race, session_types, skip_existing, existing):
                 print(f"  ⏭  Skipping {year} {stype} — already in BigQuery")
                 continue
             try:
-                session = fastf1.get_session(year, race, stype)
-                session.load(telemetry=True, laps=True, weather=False)
-                if len(session.laps) == 0:
-                    print(f"  ❌  {year} {stype}: no laps found")
-                    continue
+                session = _load_session_with_retries(year, race, stype)
                 loaded[key] = session
-                print(f"  ✅  {year} {stype}: {len(session.drivers)} drivers, {len(session.laps)} laps")
+                print(
+                    f"  ✅  {year} {stype}: {len(session.drivers)} drivers, "
+                    f"{len(session.laps)} laps"
+                )
             except Exception as e:
-                print(f"  ❌  {year} {stype}: {str(e)[:120]}")
+                err = f"{year} {stype}: {e}"
+                errors.append(err)
+                print(f"  ❌  {err[:240]}")
+    if not loaded and errors:
+        # Surface root cause instead of opaque "no sessions loaded"
+        raise RuntimeError(
+            "Nothing to import — FastF1 load failed: " + " | ".join(errors)[:800]
+        )
     return loaded
 
 

@@ -168,6 +168,7 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         "loaded": {},
         "telemetry_df": None,
         "laps_df": None,
+        "skip_all_existing": False,
     }
 
     def load():
@@ -179,10 +180,26 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
             years, race, session_types, skip_existing, state["existing"]
         )
         if not loaded:
-            raise RuntimeError("Nothing to import (no sessions loaded)")
+            requested = {(y, s) for y in years for s in session_types}
+            already = set(state["existing"].keys()) & requested
+            if skip_existing and already and already == requested:
+                db.append_log(
+                    job_id,
+                    "All requested sessions already in BigQuery — skipping FastF1 import",
+                )
+                state["loaded"] = {}
+                state["skip_all_existing"] = True
+                return
+            raise RuntimeError(
+                "Nothing to import (no sessions loaded — all skipped or FastF1 failed)"
+            )
         state["loaded"] = loaded
+        state["skip_all_existing"] = False
 
     def resample():
+        if state.get("skip_all_existing"):
+            db.append_log(job_id, "Skip resample — no new sessions")
+            return
         telemetry_df, laps_df = pipe.extract_telemetry(state["loaded"])
         state["telemetry_df"] = telemetry_df
         state["laps_df"] = laps_df
@@ -192,20 +209,32 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         )
 
     def upload_sessions():
+        if state.get("skip_all_existing"):
+            db.append_log(job_id, "Skip sessions/laps upload — already present")
+            return
         pipe.upload_sessions_and_laps(
             client, state["loaded"], state["laps_df"], race
         )
 
     def upload_telemetry():
+        if state.get("skip_all_existing"):
+            db.append_log(job_id, "Skip telemetry upload — already present")
+            return
         pipe.upload_telemetry(client, state["telemetry_df"], state["loaded"])
 
     def verify():
         pipe.verify_upload(client, years, race, session_types)
 
     def quality():
+        if state.get("skip_all_existing"):
+            db.append_log(job_id, "Skip quality checks — no new sessions")
+            return
         pipe.run_quality_checks(client, state["loaded"], race)
 
     def unified():
+        if state.get("skip_all_existing"):
+            db.append_log(job_id, "Skip laps_unified — no new sessions")
+            return
         pipe.update_laps_unified(client, state["loaded"])
 
     def kaggle():

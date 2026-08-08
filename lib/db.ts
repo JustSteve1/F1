@@ -6,20 +6,36 @@ declare global {
 }
 
 function createPool() {
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) {
     throw new Error("DATABASE_URL is not set");
   }
 
+  const isLocal = raw.includes("localhost") || raw.includes("127.0.0.1");
+  // pg-connection-string v2 treats sslmode=require as verify-full. For Cloud SQL
+  // without a server CA bundle, force libpq-compatible require + disable CA check.
+  let connectionString = raw;
+  try {
+    const url = new URL(raw);
+    if (!isLocal) {
+      url.searchParams.set("uselibpqcompat", "true");
+      if (!url.searchParams.get("sslmode")) {
+        url.searchParams.set("sslmode", "require");
+      }
+      connectionString = url.toString();
+    }
+  } catch {
+    // keep raw connection string
+  }
+
+  const ssl =
+    isLocal && process.env.DATABASE_SSL !== "true"
+      ? undefined
+      : { rejectUnauthorized: false };
+
   return new Pool({
     connectionString,
-    ssl:
-      process.env.DATABASE_SSL === "false"
-        ? undefined
-        : connectionString.includes("localhost") ||
-            connectionString.includes("127.0.0.1")
-          ? undefined
-          : { rejectUnauthorized: false },
+    ssl,
     max: 5,
   });
 }
