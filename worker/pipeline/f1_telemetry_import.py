@@ -17,6 +17,7 @@ Requirements:
 
 import argparse
 import hashlib
+import logging
 import os
 import sys
 import warnings
@@ -121,32 +122,36 @@ def check_existing(client, years, race, session_types):
 
 # ── Step 2: Load FastF1 sessions ──────────────────────────────────────────────
 
-def _agent_dbg(hypothesis_id, message, data=None):
-    """Debug-mode NDJSON logger (local file + Cloud Run stdout)."""
-    import json
-    from datetime import datetime, timezone
 
-    payload = {
-        "sessionId": "a36318",
-        "hypothesisId": hypothesis_id,
-        "location": "f1_telemetry_import.py:_load_session_with_retries",
-        "message": message,
-        "data": data or {},
-        "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+def _cache_session_inventory(cache_dir: str, year: int, race: str) -> dict:
+    """List cached FastF1 session folder names for year/race (for error context)."""
+    from pathlib import Path
+
+    root = Path(cache_dir) / str(year)
+    if not root.exists():
+        return {"year_dir_exists": False, "event_dirs": [], "session_dirs": []}
+    race_token = race.replace(" ", "_")
+    event_dirs = sorted(
+        p.name for p in root.iterdir() if p.is_dir() and race_token in p.name
+    )
+    session_dirs = []
+    for ed in event_dirs:
+        for child in sorted((root / ed).iterdir()):
+            if child.is_dir():
+                files = [f.name for f in child.iterdir() if f.is_file()]
+                session_dirs.append(
+                    {
+                        "event": ed,
+                        "session": child.name,
+                        "has_timing": "timing_app_data.ff1pkl" in files,
+                        "file_count": len(files),
+                    }
+                )
+    return {
+        "year_dir_exists": True,
+        "event_dirs": event_dirs,
+        "session_dirs": session_dirs,
     }
-    line = json.dumps(payload, default=str)
-    # #region agent log
-    print(f"AGENT_DEBUG {line}")
-    try:
-        with open(
-            "/Users/steve/Projects/interval-ai/.cursor/debug-a36318.log",
-            "a",
-            encoding="utf-8",
-        ) as _df:
-            _df.write(line + "\n")
-    except Exception:
-        pass
-    # #endregion
 
 
 def _laps_accessible(session):
@@ -158,44 +163,42 @@ def _laps_accessible(session):
         return False, None, f"{type(e).__name__}: {e}"
 
 
-def _load_session_with_retries(year, race, stype, attempts=3):
+class _WarningCapture(logging.Handler):
+    """Collect FastF1 warning messages during session.load()."""
+
+    def __init__(self):
+        super().__init__(level=logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            msg = str(record.msg)
+        if msg:
+            self.messages.append(msg)
+
+
+def _load_session_with_retries(year, race, stype, attempts=5):
     """Load a FastF1 session with retries and telemetry fallback."""
     import time
 
     last_err = None
     for attempt in range(1, attempts + 1):
+        warn_cap = _WarningCapture()
+        f1_logger = logging.getLogger("fastf1")
+        f1_logger.addHandler(warn_cap)
         try:
             session = fastf1.get_session(year, race, stype)
-            _agent_dbg(
-                "A",
-                "get_session ok",
-                {"year": year, "race": race, "stype": stype, "attempt": attempt},
-            )
             load_raised = None
             try:
                 session.load(telemetry=True, laps=True, weather=False)
             except Exception as tel_err:
                 load_raised = f"{type(tel_err).__name__}: {tel_err}"
             ok, n, laps_err = _laps_accessible(session)
-            _agent_dbg(
-                "A",
-                "after load(telemetry=True)",
-                {
-                    "attempt": attempt,
-                    "load_raised": load_raised,
-                    "laps_ok": ok,
-                    "laps_n": n,
-                    "laps_err": laps_err,
-                },
-            )
             if load_raised or not ok:
                 # Soft-fail: FastF1 often returns from load() even when timing
                 # data failed (common on Cloud Run). Fall back to laps-only.
-                _agent_dbg(
-                    "B",
-                    "entering laps-only fallback",
-                    {"attempt": attempt, "load_raised": load_raised, "laps_err": laps_err},
-                )
                 session = fastf1.get_session(year, race, stype)
                 fb_raised = None
                 try:
@@ -203,22 +206,14 @@ def _load_session_with_retries(year, race, stype, attempts=3):
                 except Exception as fb_err:
                     fb_raised = f"{type(fb_err).__name__}: {fb_err}"
                 ok2, n2, laps_err2 = _laps_accessible(session)
-                _agent_dbg(
-                    "B",
-                    "after load(telemetry=False)",
-                    {
-                        "attempt": attempt,
-                        "fb_raised": fb_raised,
-                        "laps_ok": ok2,
-                        "laps_n": n2,
-                        "laps_err": laps_err2,
-                    },
-                )
                 if not ok2:
+                    warn_txt = "; ".join(warn_cap.messages[-6:]) or "none"
                     raise RuntimeError(
-                        "laps unavailable after load "
-                        f"(timing/API soft-fail). true_load={load_raised or laps_err}; "
-                        f"false_load={fb_raised or laps_err2}"
+                        "FastF1 timing data missing after load "
+                        "(Cloud Run often needs seeded GCS cache). "
+                        f"true_load={load_raised or laps_err}; "
+                        f"false_load={fb_raised or laps_err2}; "
+                        f"warnings={warn_txt}"
                     )
                 if n2 == 0:
                     raise RuntimeError("no laps found after laps-only load")
@@ -227,20 +222,10 @@ def _load_session_with_retries(year, race, stype, attempts=3):
                     telem = probe.get_telemetry()
                     telem_n = 0 if telem is None else len(telem)
                 except Exception as probe_err:
-                    _agent_dbg(
-                        "C",
-                        "get_telemetry probe failed",
-                        {"attempt": attempt, "err": str(probe_err)[:240]},
-                    )
                     raise RuntimeError(
                         "telemetry unavailable on this host "
                         f"(laps loaded but get_telemetry failed): {probe_err}"
                     ) from probe_err
-                _agent_dbg(
-                    "C",
-                    "get_telemetry probe ok",
-                    {"attempt": attempt, "telem_n": telem_n},
-                )
                 if telem_n == 0:
                     raise RuntimeError(
                         "telemetry unavailable on this host "
@@ -249,27 +234,15 @@ def _load_session_with_retries(year, race, stype, attempts=3):
             else:
                 if n == 0:
                     raise RuntimeError("no laps found")
-                _agent_dbg(
-                    "A",
-                    "telemetry=True path succeeded",
-                    {"attempt": attempt, "laps_n": n},
-                )
             return session
         except Exception as e:
             last_err = e
             msg = str(e)
-            _agent_dbg(
-                "D",
-                "attempt failed",
-                {
-                    "attempt": attempt,
-                    "err_type": type(e).__name__,
-                    "err": msg[:300],
-                },
-            )
             print(f"  ❌  {year} {stype}: attempt {attempt}/{attempts}: {msg[:200]}")
             if attempt < attempts:
-                time.sleep(2 ** attempt)
+                time.sleep(min(2 ** attempt, 30))
+        finally:
+            f1_logger.removeHandler(warn_cap)
     assert last_err is not None
     raise last_err
 
@@ -277,7 +250,9 @@ def _load_session_with_retries(year, race, stype, attempts=3):
 def load_sessions(years, race, session_types, skip_existing, existing):
     loaded = {}
     errors = []
+    cache_dir = os.environ.get("FASTF1_CACHE_DIR", "/tmp/fastf1-cache")
     for year in years:
+        inv = _cache_session_inventory(cache_dir, year, race)
         for stype in session_types:
             key = (year, stype)
             if skip_existing and key in existing:
@@ -292,6 +267,13 @@ def load_sessions(years, race, session_types, skip_existing, existing):
                 )
             except Exception as e:
                 err = f"{year} {stype}: {e}"
+                cached_names = [
+                    s["session"] for s in inv.get("session_dirs", [])
+                ]
+                if cached_names:
+                    err += f" | cached_sessions={cached_names}"
+                else:
+                    err += " | cached_sessions=[]"
                 errors.append(err)
                 print(f"  ❌  {err[:240]}")
     if not loaded and errors:
@@ -304,12 +286,68 @@ def load_sessions(years, race, session_types, skip_existing, existing):
 
 # ── Step 3: Resample telemetry ────────────────────────────────────────────────
 
+_TELEM_LOAD_STATS = {
+    "get_telemetry_ok": 0,
+    "car_data_fallback_ok": 0,
+    "failed": 0,
+    "failed_examples": [],
+}
+
+
+def _load_lap_telemetry_frame(lap):
+    """
+    Load per-lap telemetry robustly.
+
+    FastF1 get_telemetry() merges car_data + pos_data on Date. For Monaco 2026 R
+    (and similar), pos_data is empty for most laps while car_data is present;
+    get_telemetry() then raises KeyError on Date. Fall back to car_data (+ optional
+    pos merge) so speed/throttle/etc. are still captured; XYZ may be null.
+    """
+    # Preferred: full telemetry with XYZ when position stream exists
+    try:
+        telem = lap.get_telemetry()
+        if telem is not None and len(telem) > 0:
+            _TELEM_LOAD_STATS["get_telemetry_ok"] += 1
+            return telem, "get_telemetry"
+    except Exception as e:
+        telem_err = f"{type(e).__name__}: {e}"
+    else:
+        telem_err = "empty_get_telemetry"
+
+    # Fallback: car channels always; merge pos when available for XYZ
+    try:
+        car = lap.get_car_data()
+        if car is None or len(car) == 0:
+            raise RuntimeError("empty_car_data")
+        try:
+            pos = lap.get_pos_data()
+            if pos is not None and len(pos) > 0 and hasattr(car, "merge_channels"):
+                car = car.merge_channels(pos)
+        except Exception:
+            pass
+        if "Distance" not in getattr(car, "columns", []):
+            car = car.add_distance()
+        _TELEM_LOAD_STATS["car_data_fallback_ok"] += 1
+        return car, "car_data_fallback"
+    except Exception as e:
+        _TELEM_LOAD_STATS["failed"] += 1
+        if len(_TELEM_LOAD_STATS["failed_examples"]) < 10:
+            _TELEM_LOAD_STATS["failed_examples"].append({
+                "driver": str(lap.get("DriverNumber")),
+                "lap": safe_int(lap.get("LapNumber")),
+                "get_telemetry_err": telem_err,
+                "fallback_err": f"{type(e).__name__}: {e}",
+            })
+        return None, "failed"
+
+
 def resample_lap_telemetry(lap, interval_sec=TELEMETRY_INTERVAL):
     try:
-        telemetry = lap.get_telemetry()
-        if len(telemetry) == 0:
+        telemetry, _source = _load_lap_telemetry_frame(lap)
+        if telemetry is None or len(telemetry) == 0:
             return []
 
+        telemetry = telemetry.copy()
         telemetry["Time_sec"] = telemetry["Time"].dt.total_seconds()
         lap_duration = telemetry["Time_sec"].max()
         num_intervals = int(np.ceil(lap_duration / interval_sec))
@@ -341,12 +379,12 @@ def resample_lap_telemetry(lap, interval_sec=TELEMETRY_INTERVAL):
                 "gear": safe_int(row.get("nGear")),
                 "rpm": safe_float(row.get("RPM")),
                 "drs": safe_int(row.get("DRS")),
-                "x": safe_float(row.get("X")),
-                "y": safe_float(row.get("Y")),
-                "z": safe_float(row.get("Z")),
+                "x": safe_float(row.get("X")) if "X" in telemetry.columns else None,
+                "y": safe_float(row.get("Y")) if "Y" in telemetry.columns else None,
+                "z": safe_float(row.get("Z")) if "Z" in telemetry.columns else None,
                 "deceleration": round(decel, 2),
                 "distance_m": round(distance_m, 2),
-                "cumulative_distance": safe_float(row.get("Distance")),
+                "cumulative_distance": safe_float(row.get("Distance")) if "Distance" in telemetry.columns else None,
             })
         return resampled
     except Exception:
@@ -356,14 +394,21 @@ def resample_lap_telemetry(lap, interval_sec=TELEMETRY_INTERVAL):
 def extract_telemetry(loaded_sessions):
     all_telemetry = []
     all_laps = []
+    _TELEM_LOAD_STATS["get_telemetry_ok"] = 0
+    _TELEM_LOAD_STATS["car_data_fallback_ok"] = 0
+    _TELEM_LOAD_STATS["failed"] = 0
+    _TELEM_LOAD_STATS["failed_examples"] = []
 
     for (year, stype), session in loaded_sessions.items():
         event_name = session.event["EventName"]
         circuit = session.event.get("Location", "")
         print(f"  Extracting {year} {stype} ({len(session.laps)} laps)…")
+        laps_with_points = 0
 
         for _, lap in session.laps.iterrows():
             points = resample_lap_telemetry(lap)
+            if points:
+                laps_with_points += 1
             for p in points:
                 p.update({"season": year, "session_type": stype, "event_name": event_name, "circuit": circuit})
             all_telemetry.extend(points)
@@ -383,6 +428,12 @@ def extract_telemetry(loaded_sessions):
                 "sector_2": timedelta_to_seconds(lap.get("Sector2Time")),
                 "sector_3": timedelta_to_seconds(lap.get("Sector3Time")),
             })
+        print(
+            f"     telem coverage: {laps_with_points}/{len(session.laps)} laps "
+            f"(get_telemetry={_TELEM_LOAD_STATS['get_telemetry_ok']}, "
+            f"car_fallback={_TELEM_LOAD_STATS['car_data_fallback_ok']}, "
+            f"failed={_TELEM_LOAD_STATS['failed']})"
+        )
 
     telemetry_df = pd.DataFrame(all_telemetry).drop_duplicates(
         subset=["season", "session_type", "driver_number", "lap_number", "lap_time_sec"]

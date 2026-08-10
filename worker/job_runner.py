@@ -144,6 +144,7 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
     from google.cloud import bigquery
 
     import f1_telemetry_import as pipe
+    import fastf1_cache_sync
 
     years = sorted(set(int(y) for y in params["years"]))
     race = str(params["race"])
@@ -157,11 +158,29 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         "FASTF1_CACHE_DIR", os.path.expanduser("~/.cache/fastf1")
     )
     os.makedirs(cache_dir, exist_ok=True)
+
+    def _cache_log(msg: str) -> None:
+        print(msg)
+        db.append_log(job_id, msg)
+
+    # Pull seeded/previous FastF1 cache before any livetiming downloads
+    try:
+        fastf1_cache_sync.pull_cache(cache_dir, log=_cache_log)
+    except Exception as pull_err:
+        db.append_log(
+            job_id,
+            f"FastF1 GCS cache pull failed (continuing cold): {pull_err}",
+            level="warn",
+        )
+
     fastf1.Cache.enable_cache(cache_dir)
 
     client = bigquery.Client(project=pipe.PROJECT)
     db.append_log(job_id, f"BigQuery project={pipe.PROJECT} dataset={pipe.DATASET}")
     db.append_log(job_id, f"FastF1 cache={cache_dir}")
+    gcs_uri = os.environ.get("FASTF1_CACHE_GCS_URI", "").strip()
+    if gcs_uri:
+        db.append_log(job_id, f"FastF1 GCS cache URI={gcs_uri}")
 
     state: dict[str, Any] = {
         "existing": {},
@@ -239,9 +258,8 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
 
     def kaggle():
         import kaggle_upload as kag
-
-        # Reuse kaggle_upload.main() logic
         from kaggle.api.kaggle_api_extended import KaggleApi
+        kag.ensure_kaggle_auth()
 
         api = KaggleApi()
         api.authenticate()
@@ -275,7 +293,7 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
                 "lap_number",
             ]
         )
-        kag.upload_to_kaggle(api, combined)
+        kag.upload_to_kaggle(combined)
 
     plan: list[tuple[str, str, Callable[[], None]]] = [
         ("load_fastf1", "Load FastF1 sessions", load),
@@ -292,11 +310,26 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         plan.append(("kaggle_upload", "Kaggle upload", kaggle))
     plan.append(("done", "Finalize", lambda: None))
 
+    pipeline_ok = True
     for step_key, label, fn in plan:
         ok = _run_step(job_id, params, step_key, label, fn)
         if not ok:
+            pipeline_ok = False
             _mark_cancelled(job_id, params, step_key)
-            return
+            break
+
+    # Persist any cache files obtained this run (success or partial)
+    try:
+        fastf1_cache_sync.push_cache(cache_dir, log=_cache_log)
+    except Exception as push_err:
+        db.append_log(
+            job_id,
+            f"FastF1 GCS cache push failed: {push_err}",
+            level="warn",
+        )
+
+    if not pipeline_ok:
+        return
 
     db.update_job(
         job_id,
@@ -328,6 +361,10 @@ def run(job_id: str) -> int:
         f"Worker started for {params.get('race')} ({params.get('years')})",
     )
 
+    cache_dir = os.environ.get(
+        "FASTF1_CACHE_DIR", os.path.expanduser("~/.cache/fastf1")
+    )
+
     try:
         if os.environ.get("WORKER_DRY_RUN", "").lower() in {"1", "true", "yes"}:
             db.append_log(job_id, "WORKER_DRY_RUN enabled — skipping FastF1/BQ")
@@ -336,6 +373,16 @@ def run(job_id: str) -> int:
             _real_pipeline(job_id, params)
         return 0
     except Exception as exc:
+        # Best-effort: keep any partial FastF1 downloads for the next run
+        try:
+            import fastf1_cache_sync
+
+            fastf1_cache_sync.push_cache(
+                cache_dir,
+                log=lambda m: db.append_log(job_id, m, level="warn"),
+            )
+        except Exception:
+            pass
         db.update_job(
             job_id,
             status="failed",

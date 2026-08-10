@@ -55,6 +55,21 @@ export function JobDetail({
   const canCancel = job.status === "queued" || job.status === "running";
   const canRetry = job.status === "failed" || job.status === "cancelled";
 
+  const sessionSummary = useMemo(() => {
+    const labels = job.params.sessionLabels ?? {};
+    return job.params.sessions
+      .map((code) => (labels[code] ? `${code} (${labels[code]})` : code))
+      .join(" · ");
+  }, [job.params.sessionLabels, job.params.sessions]);
+
+  const softFailHint = useMemo(() => {
+    const err = job.error || "";
+    return (
+      /DataNotLoadedError/i.test(err) ||
+      /laps unavailable after load/i.test(err)
+    );
+  }, [job.error]);
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-4 border border-white/10 bg-white/[0.02] p-5">
@@ -67,7 +82,7 @@ export function JobDetail({
           </div>
           <p className="mt-1 text-xs text-white/45 font-mono">{job.id}</p>
           <p className="mt-2 text-sm text-white/60">
-            {job.params.years.join(", ")} · {job.params.sessions.join(" ")}
+            {job.params.years.join(", ")} · {sessionSummary}
             {job.params.includeKaggle ? " · Kaggle" : ""}
             {job.params.noSkip ? " · no-skip" : ""}
           </p>
@@ -77,6 +92,12 @@ export function JobDetail({
           {job.error && (
             <p className="mt-2 text-sm text-red-400 border border-red-500/30 bg-red-500/10 px-3 py-2">
               {job.error}
+            </p>
+          )}
+          {softFailHint && canRetry && (
+            <p className="mt-2 text-sm text-amber-200/90 border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+              FastF1 soft-fail loading laps — the session id is usually fine.
+              Retry often succeeds once the timing API responds.
             </p>
           )}
         </div>

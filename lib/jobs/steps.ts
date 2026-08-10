@@ -13,7 +13,7 @@ export const PIPELINE_STEPS = [
 
 export type StepKey = (typeof PIPELINE_STEPS)[number]["key"];
 
-export const SESSION_TYPES = ["FP1", "FP2", "FP3", "Q", "SQ", "R"] as const;
+export const SESSION_TYPES = ["FP1", "FP2", "FP3", "Q", "SQ", "S", "R"] as const;
 export type SessionType = (typeof SESSION_TYPES)[number];
 
 export type JobStatus =
@@ -36,6 +36,8 @@ export type JobParams = {
   years: number[];
   race: string;
   sessions: SessionType[];
+  /** Optional map of session code → schedule label (e.g. Q → Qualifying). */
+  sessionLabels?: Record<string, string>;
   noSkip: boolean;
   skipQuality: boolean;
   skipUnified: boolean;

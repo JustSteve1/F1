@@ -60,7 +60,125 @@ gcloud sql instances patch interval-jobs --project=f1-data-library \
 
 - **Trigger SA:** `roles/run.developer` (execute Cloud Run Jobs)
 - **Worker SA:** `roles/bigquery.jobUser`, `roles/bigquery.dataEditor`, `roles/cloudsql.client`
-- Kaggle credentials: **not configured** (leave `includeKaggle=false`)
+- **Worker SA (FastF1 cache):** `roles/storage.objectAdmin` on `gs://f1-data-library-fastf1-cache`
+- **Worker SA (Kaggle secrets):** `roles/secretmanager.secretAccessor` on `kaggle-username` + `kaggle-key` (or `kaggle-api-token`)
+
+### Kaggle credentials (Cloud Run)
+
+`includeKaggle=true` needs Kaggle auth on job `f1-telemetry-import`. The worker accepts either:
+
+| Preferred (configured) | Env | Secret Manager |
+|-----------|-----|----------------|
+| API token | `KAGGLE_API_TOKEN` | `kaggle-api-token` |
+| Legacy (optional fallback) | `KAGGLE_USERNAME` + `KAGGLE_KEY` | `kaggle-username` + `kaggle-key` |
+
+Also set plain env `KAGGLE_DATASET` (default `stevefza/f1-2026-bahrain-testing-day-2`).
+
+**Current Cloud Run setup:** `KAGGLE_API_TOKEN` ← `kaggle-api-token:latest`. Upload uses **kagglehub** (`kagglehub.dataset_upload`).
+
+**Generate credentials** at [https://www.kaggle.com/settings/api](https://www.kaggle.com/settings/api):
+
+- **Preferred:** “Generate New Token” → copy token (do not commit it).
+- **Legacy:** “Create Legacy API Key” → `kaggle.json` with `username` + `key` (or use `~/.kaggle/kaggle.json`).
+
+**Preferred: mount `KAGGLE_API_TOKEN`**
+
+```bash
+export PROJECT=f1-data-library
+export REGION=europe-west1
+export JOB=f1-telemetry-import
+export SA=interval-jobs-worker@$PROJECT.iam.gserviceaccount.com
+
+# Paste token when prompted (or use --data-file=./token.txt then shred the file)
+printf '%s' 'PASTE_TOKEN_HERE' | gcloud secrets create kaggle-api-token \
+  --project=$PROJECT --replication-policy=automatic --data-file=-
+# If secret already exists:
+# printf '%s' 'PASTE_TOKEN_HERE' | gcloud secrets versions add kaggle-api-token \
+#   --project=$PROJECT --data-file=-
+
+gcloud secrets add-iam-policy-binding kaggle-api-token \
+  --project=$PROJECT \
+  --member="serviceAccount:$SA" \
+  --role=roles/secretmanager.secretAccessor
+
+gcloud run jobs update $JOB \
+  --project=$PROJECT --region=$REGION \
+  --update-secrets=KAGGLE_API_TOKEN=kaggle-api-token:latest \
+  --update-env-vars=KAGGLE_DATASET=stevefza/f1-2026-bahrain-testing-day-2 \
+  --remove-secrets=KAGGLE_USERNAME,KAGGLE_KEY
+```
+
+**Legacy (optional; previously used from local `~/.kaggle/kaggle.json`):**
+
+```bash
+export PROJECT=f1-data-library
+export REGION=europe-west1
+export JOB=f1-telemetry-import
+export SA=interval-jobs-worker@$PROJECT.iam.gserviceaccount.com
+
+# From ~/.kaggle/kaggle.json fields (do not echo values into shell history)
+python3 - <<'PY'
+import json, subprocess, tempfile, os
+from pathlib import Path
+cfg = json.loads(Path.home().joinpath(".kaggle/kaggle.json").read_text())
+for name, field in (("kaggle-username", "username"), ("kaggle-key", "key")):
+    with tempfile.NamedTemporaryFile("w", delete=False) as f:
+        f.write(cfg[field].strip()); path = f.name
+    try:
+        r = subprocess.run(["gcloud", "secrets", "describe", name, f"--project={os.environ['PROJECT']}"], capture_output=True)
+        cmd = ["gcloud", "secrets", "versions", "add", name, f"--project={os.environ['PROJECT']}", f"--data-file={path}"]
+        if r.returncode != 0:
+            cmd = ["gcloud", "secrets", "create", name, f"--project={os.environ['PROJECT']}", "--replication-policy=automatic", f"--data-file={path}"]
+        subprocess.check_call(cmd)
+    finally:
+        os.unlink(path)
+PY
+
+for SECRET in kaggle-username kaggle-key; do
+  gcloud secrets add-iam-policy-binding $SECRET \
+    --project=$PROJECT \
+    --member="serviceAccount:$SA" \
+    --role=roles/secretmanager.secretAccessor
+done
+
+gcloud run jobs update $JOB \
+  --project=$PROJECT --region=$REGION \
+  --update-secrets=KAGGLE_USERNAME=kaggle-username:latest,KAGGLE_KEY=kaggle-key:latest \
+  --update-env-vars=KAGGLE_DATASET=stevefza/f1-2026-bahrain-testing-day-2
+```
+
+Never commit `kaggle.json`, tokens, or secret values.
+
+### FastF1 GCS cache (Cloud Run)
+
+Cloud Run often soft-fails livetiming downloads (`Failed to load timing data` → `DataNotLoadedError` on `.laps`). The worker pulls/pushes a shared FastF1 cache from GCS so seeded sessions work offline of the livetiming API.
+
+| Item | Value |
+|------|--------|
+| Bucket | `gs://f1-data-library-fastf1-cache` (`europe-west1`) |
+| Prefix | `fastf1/` |
+| Job env | `FASTF1_CACHE_GCS_URI=gs://f1-data-library-fastf1-cache/fastf1` |
+| Local cache | `FASTF1_CACHE_DIR=/tmp/fastf1-cache` (Cloud Run) / `~/.cache/fastf1` (laptop) |
+
+**Create bucket + IAM (once):**
+
+```bash
+gsutil mb -p f1-data-library -l europe-west1 -b on gs://f1-data-library-fastf1-cache
+gsutil iam ch \
+  serviceAccount:interval-jobs-worker@f1-data-library.iam.gserviceaccount.com:roles/storage.objectAdmin \
+  gs://f1-data-library-fastf1-cache
+```
+
+**Seed cache from a machine that can load FastF1 (e.g. Monaco 2026 Q):**
+
+```bash
+export FASTF1_CACHE_GCS_URI=gs://f1-data-library-fastf1-cache/fastf1
+python3 worker/pipeline/seed_fastf1_cache.py \
+  --year 2026 --race "Monaco Grand Prix" --session Q R
+
+# Or manually:
+# gsutil -m rsync -r ~/.cache/fastf1 gs://f1-data-library-fastf1-cache/fastf1
+```
 
 ### Rebuild / update the worker image
 
@@ -77,7 +195,8 @@ gcloud run jobs update $JOB \
   --image=$IMAGE \
   --service-account=interval-jobs-worker@$PROJECT.iam.gserviceaccount.com \
   --set-cloudsql-instances=$PROJECT:$REGION:interval-jobs \
-  --max-retries=0 --task-timeout=3600 --memory=4Gi --cpu=2
+  --max-retries=0 --task-timeout=3600 --memory=4Gi --cpu=2 \
+  --update-env-vars=FASTF1_CACHE_GCS_URI=gs://f1-data-library-fastf1-cache/fastf1,FASTF1_CACHE_DIR=/tmp/fastf1-cache
 ```
 
 Clear dry-run when ready for real imports:

@@ -10,7 +10,8 @@ Usage:
 
 Auth:
     BigQuery : gcloud auth application-default login
-    Kaggle   : ~/.kaggle/kaggle.json  OR  KAGGLE_USERNAME + KAGGLE_KEY env vars
+    Kaggle   : KAGGLE_API_TOKEN (preferred) OR ~/.kaggle/kaggle.json
+               OR KAGGLE_USERNAME + KAGGLE_KEY
 
 Output file on Kaggle: "All Laps - {DD Month YYYY}.csv"
 """
@@ -22,7 +23,9 @@ import shutil
 import tempfile
 import zipfile
 from datetime import datetime
+from pathlib import Path
 
+import kagglehub
 import pandas as pd
 from google.cloud import bigquery
 from kaggle.api.kaggle_api_extended import KaggleApi
@@ -260,10 +263,36 @@ def build_kaggle_rows(new_laps: pd.DataFrame, telemetry_df: pd.DataFrame) -> pd.
     return pd.DataFrame(rows)
 
 
+def ensure_kaggle_auth() -> None:
+    """Ensure kagglehub/kaggle can authenticate (prefer KAGGLE_API_TOKEN)."""
+    if os.environ.get("KAGGLE_API_TOKEN", "").strip():
+        return
+    if Path(os.path.expanduser("~/.kaggle/access_token")).is_file():
+        return
+    if Path(os.path.expanduser("~/.kaggle/kaggle.json")).is_file():
+        return
+    # Materialize legacy env vars into kaggle.json for kagglehub Option 5
+    user = os.environ.get("KAGGLE_USERNAME", "").strip()
+    key = os.environ.get("KAGGLE_KEY", "").strip()
+    if user and key:
+        kdir = Path(os.path.expanduser("~/.kaggle"))
+        kdir.mkdir(parents=True, exist_ok=True)
+        cfg = kdir / "kaggle.json"
+        if not cfg.is_file():
+            cfg.write_text(json.dumps({"username": user, "key": key}))
+            cfg.chmod(0o600)
+        return
+    raise RuntimeError(
+        "Kaggle credentials not found. Set KAGGLE_API_TOKEN "
+        "(preferred) or KAGGLE_USERNAME+KAGGLE_KEY / ~/.kaggle/kaggle.json"
+    )
+
+
 # ── Step 6: Upload to Kaggle ──────────────────────────────────────────────────
 
-def upload_to_kaggle(api: KaggleApi, combined_df: pd.DataFrame):
-    """Save combined CSV and upload as a new Kaggle dataset version."""
+def upload_to_kaggle(combined_df: pd.DataFrame):
+    """Save combined CSV and upload as a new Kaggle dataset version via kagglehub."""
+    ensure_kaggle_auth()
     today = datetime.now().strftime("%-d %B %Y")   # e.g. "30 April 2026"
     filename = f"All Laps - {today}.csv"
 
@@ -274,13 +303,12 @@ def upload_to_kaggle(api: KaggleApi, combined_df: pd.DataFrame):
         size_mb = os.path.getsize(out_path) / 1024 / 1024
         print(f"  Saved: {filename} ({size_mb:.1f} MB, {len(combined_df):,} rows)")
 
-        owner, slug = KAGGLE_DATASET.split("/")
-        print(f"  Uploading to kaggle.com/datasets/{KAGGLE_DATASET}…")
-        api.dataset_create_version(
-            folder=tmp_dir,
-            version_notes=f"Auto-update: {len(combined_df):,} laps as of {today}",
-            delete_old_versions=False,
-            quiet=False,
+        notes = f"Auto-update: {len(combined_df):,} laps as of {today}"
+        print(f"  Uploading via kagglehub → kaggle.com/datasets/{KAGGLE_DATASET}…")
+        kagglehub.dataset_upload(
+            KAGGLE_DATASET,
+            tmp_dir,
+            version_notes=notes,
         )
         print(f"  ✅  Uploaded as new version — {filename}")
     finally:
@@ -294,7 +322,7 @@ def main():
     print(f"    BigQuery : {PROJECT}.{DATASET}")
     print(f"    Kaggle   : {KAGGLE_DATASET}\n")
 
-    # Kaggle auth
+    ensure_kaggle_auth()
     api = KaggleApi()
     api.authenticate()
     print("  ✅  Kaggle authenticated\n")
@@ -345,9 +373,9 @@ def main():
 
     print(f"  ✅  Total rows for upload: {len(combined):,}")
 
-    # Step 6: Upload to Kaggle
+    # Step 6: Upload to Kaggle (kagglehub)
     print("\n── Step 6: Upload to Kaggle…")
-    upload_to_kaggle(api, combined)
+    upload_to_kaggle(combined)
 
     print("\n✅  Kaggle upload complete.\n")
 

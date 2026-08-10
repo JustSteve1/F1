@@ -65,10 +65,28 @@ export function parseJobParams(input: unknown): JobParams {
 
   if (!sessions.length) throw new Error("At least one session type is required");
 
+  const uniqueSessions = [...new Set(sessions)];
+
+  let sessionLabels: Record<string, string> | undefined;
+  const labelsRaw = body.sessionLabels;
+  if (labelsRaw && typeof labelsRaw === "object" && !Array.isArray(labelsRaw)) {
+    const cleaned: Record<string, string> = {};
+    for (const [code, label] of Object.entries(
+      labelsRaw as Record<string, unknown>,
+    )) {
+      if (!uniqueSessions.includes(code as SessionType)) continue;
+      if (typeof label === "string" && label.trim()) {
+        cleaned[code] = label.trim();
+      }
+    }
+    if (Object.keys(cleaned).length) sessionLabels = cleaned;
+  }
+
   return {
     years: [...new Set(years)].sort(),
     race,
-    sessions: [...new Set(sessions)],
+    sessions: uniqueSessions,
+    ...(sessionLabels ? { sessionLabels } : {}),
     noSkip: Boolean(body.noSkip),
     skipQuality: Boolean(body.skipQuality),
     skipUnified: Boolean(body.skipUnified),

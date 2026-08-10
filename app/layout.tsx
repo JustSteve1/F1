@@ -18,8 +18,8 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "Interval.ai - Your Journey Starts here",
-  description: "The future of F1 interaction",
+  title: "Interval.ai — Telemetry import jobs",
+  description: "Run and monitor FastF1 → BigQuery telemetry import jobs",
 };
 
 import { AuthProvider } from "@/context/AuthContext";

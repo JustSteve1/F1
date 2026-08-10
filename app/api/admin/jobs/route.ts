@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createJob, listJobs, parseJobParams } from "@/lib/jobs/queries";
 import { triggerWorker } from "@/lib/jobs/cloud-run";
+import { validateJobParamsAgainstCatalog } from "@/lib/jobs/import-catalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const params = parseJobParams(body);
+    await validateJobParamsAgainstCatalog(params);
     const job = await createJob(params);
 
     try {
@@ -41,7 +43,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ job }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to create job";
-    const status = message.toLowerCase().includes("required") ? 400 : 500;
+    const lower = message.toLowerCase();
+    const status =
+      lower.includes("required") ||
+      lower.includes("not found") ||
+      lower.includes("not a session") ||
+      lower.includes("invalid")
+        ? 400
+        : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
