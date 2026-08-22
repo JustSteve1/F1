@@ -25,6 +25,7 @@ build/
 
 # Credentials — never commit these
 *.json
+!.cursor/environment.json
 service-account*.json
 *-sa-key.json
 /tmp/gcp-bootstrap.json

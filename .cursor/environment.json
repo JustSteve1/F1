@@ -1,0 +1,9 @@
+{
+  "name": "F1 GCP provisioning",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "user": "ubuntu",
+  "install": "pip3 install --user --break-system-packages google-cloud-bigquery pandas db-dtypes pyarrow && gcloud --version && bq version"
+}
