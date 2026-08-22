@@ -35,7 +35,7 @@ export function parseJobParams(input: unknown): JobParams {
   }
   const body = input as Record<string, unknown>;
 
-  const yearsRaw = body.years;
+  const yearsRaw = body.years ?? body.year;
   const years = Array.isArray(yearsRaw)
     ? yearsRaw.map((y) => Number(y)).filter((y) => Number.isFinite(y))
     : typeof yearsRaw === "number"

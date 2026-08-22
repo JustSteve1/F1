@@ -175,10 +175,21 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
 
     fastf1.Cache.enable_cache(cache_dir)
 
+    gcs_uri = os.environ.get("FASTF1_CACHE_GCS_URI", "").strip()
+
+    # Fail fast when GCS cache was expected but race has no seeded folders
+    if gcs_uri:
+        for year in years:
+            inv = pipe._cache_session_inventory(cache_dir, year, race)
+            if not inv.get("event_dirs"):
+                raise RuntimeError(
+                    f"No FastF1 cache found for {year} {race} after GCS pull. "
+                    "Seed FastF1 cache first (Colab notebook or seed_fastf1_cache.py)."
+                )
+
     client = bigquery.Client(project=pipe.PROJECT)
     db.append_log(job_id, f"BigQuery project={pipe.PROJECT} dataset={pipe.DATASET}")
     db.append_log(job_id, f"FastF1 cache={cache_dir}")
-    gcs_uri = os.environ.get("FASTF1_CACHE_GCS_URI", "").strip()
     if gcs_uri:
         db.append_log(job_id, f"FastF1 GCS cache URI={gcs_uri}")
 

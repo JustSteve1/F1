@@ -219,6 +219,89 @@ gcloud run jobs update f1-telemetry-import \
 | `GET /api/admin/jobs/[id]` | Detail (+ steps + recent logs) |
 | `POST /api/admin/jobs/[id]/cancel` | Set `cancelling` (worker stops between steps) |
 | `POST /api/admin/jobs/[id]/retry` | Clone params → new job + trigger |
+| `POST /api/admin/import/load` | Load-focused create + trigger (FastF1 → BQ) |
+| `GET /api/admin/import/status` | BQ presence + row counts for a race |
+
+## Session Load API
+
+Thin HTTP wrappers around the existing job pipeline — same BigQuery schema, async via Cloud Run.
+
+### `POST /api/admin/import/load`
+
+Creates a job and triggers the worker. Accepts singular `year` or `years` array:
+
+```json
+{
+  "year": 2026,
+  "race": "Dutch Grand Prix",
+  "sessions": ["FP1"],
+  "noSkip": false,
+  "skipQuality": false,
+  "skipUnified": false,
+  "includeKaggle": false
+}
+```
+
+**Response `201`:**
+
+```json
+{
+  "jobId": "uuid",
+  "status": "queued",
+  "pollUrl": "/api/admin/jobs/{id}",
+  "expectedTables": ["sessions", "laps", "telemetry", "laps_unified"],
+  "sessionKeys": [{ "year": 2026, "race": "Dutch Grand Prix", "session": "FP1", "sessionKey": 1234567890 }]
+}
+```
+
+Poll `GET /api/admin/jobs/{jobId}` until `status` is `succeeded` or `failed`.
+
+### `GET /api/admin/import/status`
+
+Read-only BigQuery check for what is already stored:
+
+```
+GET /api/admin/import/status?year=2026&race=Dutch%20Grand%20Prix
+GET /api/admin/import/status?year=2026&race=Dutch%20Grand%20Prix&sessions=FP1,SQ,S,Q,R
+```
+
+**Response `200`:**
+
+```json
+{
+  "year": 2026,
+  "race": "Dutch Grand Prix",
+  "sessionsInBigQuery": ["FP1"],
+  "missingFromRequest": ["SQ", "S", "Q", "R"],
+  "telemetryRows": 12345,
+  "lapsRows": 693
+}
+```
+
+Uses the same read credentials as the import catalog (`GOOGLE_SERVICE_ACCOUNT_KEY` or ADC).
+
+### Dutch Grand Prix 2026 (sprint weekend)
+
+FastF1 event name: **`Dutch Grand Prix`**. Sprint-format sessions: **`FP1`, `SQ`, `S`, `Q`, `R`** (no FP2/FP3).
+
+**End-to-end load (after Colab seed):**
+
+```bash
+# 1. Seed cache (Colab notebook or seed_fastf1_cache.py) → gs://f1-data-library-fastf1-cache/fastf1
+
+# 2. Trigger load
+curl -X POST "https://<preview>/api/admin/import/load" \
+  -H "Content-Type: application/json" \
+  -d '{"year":2026,"race":"Dutch Grand Prix","sessions":["FP1"]}'
+
+# 3. Poll job
+curl "https://<preview>/api/admin/jobs/{jobId}"
+
+# 4. Verify BQ presence
+curl "https://<preview>/api/admin/import/status?year=2026&race=Dutch%20Grand%20Prix"
+```
+
+If GCS cache is missing for the race, the worker fails fast with: *Seed FastF1 cache first (Colab notebook or seed_fastf1_cache.py).*
 
 ## Local development
 

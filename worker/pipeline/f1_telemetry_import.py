@@ -17,6 +17,7 @@ Requirements:
 
 import argparse
 import hashlib
+import json
 import logging
 import os
 import sys
@@ -567,7 +568,8 @@ def upload_telemetry(client, telemetry_df, loaded_sessions):
     ]
     upload_df = telemetry_df[[c for c in cols if c in telemetry_df.columns]].copy()
     upload_df = upload_df.where(pd.notnull(upload_df), None)
-    rows = upload_df.to_dict("records")
+    # to_dict("records") leaves NaN floats that break insert_rows_json; use JSON round-trip
+    rows = json.loads(upload_df.to_json(orient="records", date_format="iso"))
 
     uploaded = upload_in_batches(client, f"{PROJECT}.{DATASET}.telemetry", rows, label="telemetry points")
     print(f"  ✅  {uploaded:,} telemetry points uploaded")
