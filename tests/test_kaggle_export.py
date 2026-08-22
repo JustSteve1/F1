@@ -89,6 +89,7 @@ def test_sql_downsamples_to_half_second():
 
 def test_render_sql_default_season_and_filters():
     sql = kag.render_export_sql()
+    assert "{{" not in sql
     assert "`f1-data-library.f1_data_library_DS.telemetry`" in sql
     assert "season = 2026" in sql
     assert "event_name =" not in sql

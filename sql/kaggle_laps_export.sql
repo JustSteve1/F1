@@ -1,6 +1,4 @@
 -- Agreed Kaggle export schema: one row per lap, telemetry JSON at 0.5s (2 Hz).
--- Placeholders: {{PROJECT}} {{DATASET}} {{SEASON_PREDICATE}} {{EVENT_PREDICATE}} {{SESSION_PREDICATE}}
---
 -- Output columns (order is part of the contract):
 --   season, event_name, circuit, session_type, driver, driver_number,
 --   lap_number, lap_time, lap_duration, compound, tyre_age, stint_number, telemetry
