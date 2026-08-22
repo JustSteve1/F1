@@ -1,0 +1,34 @@
+{
+  "id": "stevefza/f1-2026-bahrain-testing-day-2",
+  "id_no": 9485317,
+  "title": "Formula One (F1) - All Laps & Telemetry Dataset",
+  "subtitle": "ML-ready lap level dataset - All drivers, cars, tracks & telemetry (2026) ",
+  "description": "# 🏎️  **Formula 1 2026 Lap History (Live Dataset)** 🏎️ \n\n## 🏁 Latest Updates\n29.03 - Japan\n08.03 - Australia\n15.03 - China\n3.05 - Miami \n24.05 - Canada \n\n## 💡 About \nEvery lap. Every driver. Every data point — from Bahrain Pre-Season Testing through to the Abu Dhabi Grand Prix.\n\nThis dataset covers the full 2026 Formula One season, beginning with Pre-Season Testing Day 1 on 11 February 2026 and updated continuously through to the final lap of the Abu Dhabi Grand Prix on 6 December 2026. \n\nAll data has been sourced programmatically using a combination of APIs, then cleaned, enriched, and validated so you can go straight to analysis — no preprocessing required.\n\n## 🎯 **Who Is This For?**\n\nThis dataset is purpose-built for beginner to intermediate data analysts and machine learning enthusiasts who want to work with real, rich motorsport data without the usual data-wrangling overhead.\n\n## 📦 What's included? \n\nAll Drivers \nAll 2026 Laps to date\nLap time \nTyre Compound \nTyre Age \nTelemetry (Speed, Throttle, Brake, Gear, RPM)\nXYZ Location co-ordinates \n\n\nTelemetry & co-ordinates are provided in 0.5 second / 2Hz intervals \n\nPre-season testing is available as a separate file \n",
+  "licenses": [{"name": "other"}],
+  "keywords": [],
+  "expectedUpdateFrequency": "weekly",
+  "userSpecifiedSources": "FastF1 & OpenF1 APIs",
+  "resources": [
+    {
+      "path": "All Laps.csv",
+      "description": "One row per lap. Telemetry is a JSON array sampled at 0.5s.",
+      "schema": {
+        "fields": [
+          {"name": "season", "description": "Season year", "type": "integer"},
+          {"name": "event_name", "description": "Grand Prix or test event name", "type": "string"},
+          {"name": "circuit", "description": "Circuit / location name", "type": "string"},
+          {"name": "session_type", "description": "Session code (FP1, FP2, FP3, Q, SQ, R, or test day)", "type": "string"},
+          {"name": "driver", "description": "Driver code (e.g. LEC); falls back to driver number", "type": "string"},
+          {"name": "driver_number", "description": "Car / driver number", "type": "integer"},
+          {"name": "lap_number", "description": "Lap number within the session", "type": "integer"},
+          {"name": "lap_time", "description": "Formatted lap time M:SS.mmm", "type": "string"},
+          {"name": "lap_duration", "description": "Lap time in seconds (numeric, for ML)", "type": "decimal"},
+          {"name": "compound", "description": "Tyre compound", "type": "string"},
+          {"name": "tyre_age", "description": "Tyre age in laps", "type": "integer"},
+          {"name": "stint_number", "description": "Stint number", "type": "integer"},
+          {"name": "telemetry", "description": "JSON array of 0.5s samples: t, speed, throttle, brake, gear, rpm, drs, x, y, z", "type": "string"}
+        ]
+      }
+    }
+  ]
+}

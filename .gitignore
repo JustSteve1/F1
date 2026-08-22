@@ -16,6 +16,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -24,5 +25,15 @@ build/
 .DS_Store
 
 # Credentials — never commit these
-*.json
+kaggle.json
+**/kaggle.json
 service-account*.json
+*-credentials.json
+*-sa.json
+
+# Local tooling / data
+.claude/
+exports/
+imports/
+kaggle_upload_tmp/
+*.csv
