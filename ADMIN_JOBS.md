@@ -376,9 +376,11 @@ v1 has **no public multi-user auth** for this admin surface. Lock the deployment
 | `CLOUD_RUN_REGION` | `europe-west1` |
 | `CLOUD_RUN_JOB_NAME` | `f1-telemetry-import` |
 | `GOOGLE_SERVICE_ACCOUNT_KEY` | Full JSON of `~/.config/gcloud/interval-jobs-trigger.json` as one line |
+| `BQ_PROJECT` | `f1-data-library` |
+| `BQ_DATASET` | `f1_data_library_DS` |
 | Firebase `NEXT_PUBLIC_*` | Same as today |
 
-`GOOGLE_APPLICATION_CREDENTIALS` (file path) does **not** work on Vercel — use `GOOGLE_SERVICE_ACCOUNT_KEY` (or email + `GOOGLE_PRIVATE_KEY`).
+`GOOGLE_APPLICATION_CREDENTIALS` (file path) and `WORKER_PYTHON` do **not** work on Vercel. The load/jobs APIs skip the FastF1 Python schedule check when `VERCEL=1` (set automatically) or `SKIP_FASTF1_CATALOG=1`. Session codes are still limited to `FP1/FP2/FP3/Q/SQ/S/R`.
 
 Also authorize Vercel egress (see connectivity section) before preview can talk to Cloud SQL.
 

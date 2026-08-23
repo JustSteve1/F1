@@ -150,28 +150,63 @@ export async function loadImportCatalog(
   return { year, events };
 }
 
+function skipFastf1Catalog(): boolean {
+  const explicit = (process.env.SKIP_FASTF1_CATALOG || "").toLowerCase();
+  if (explicit === "1" || explicit === "true" || explicit === "yes") {
+    return true;
+  }
+  // Vercel Node serverless has no python3 / FastF1. Session codes are still
+  // checked by parseJobParams against SESSION_TYPES.
+  return process.env.VERCEL === "1";
+}
+
+function isPythonMissing(err: unknown): boolean {
+  const e = err as { code?: string; message?: string };
+  if (e.code === "ENOENT") return true;
+  const msg = (e.message || String(err)).toLowerCase();
+  return msg.includes("python not found") || msg.includes("enoent");
+}
+
 export async function validateJobParamsAgainstCatalog(
   params: JobParams,
 ): Promise<void> {
-  for (const year of params.years) {
-    const catalog = await loadImportCatalog(year, params.race);
-    const event = catalog.events.find(
-      (e) => e.eventName.toLowerCase() === params.race.toLowerCase(),
+  if (skipFastf1Catalog()) {
+    console.warn(
+      "[import-catalog] Skipping FastF1 schedule check (VERCEL or SKIP_FASTF1_CATALOG). Session types are still validated.",
     );
-    if (!event) {
-      throw new Error(
-        `Race "${params.race}" not found in ${year} FastF1 schedule`,
+    return;
+  }
+
+  try {
+    for (const year of params.years) {
+      const catalog = await loadImportCatalog(year, params.race);
+      const event = catalog.events.find(
+        (e) => e.eventName.toLowerCase() === params.race.toLowerCase(),
       );
-    }
-    const allowed = new Set(event.sessions.map((s) => s.code));
-    for (const code of params.sessions) {
-      if (!allowed.has(code)) {
-        const format = event.eventFormat || "unknown format";
+      if (!event) {
         throw new Error(
-          `${code} is not a session for ${params.race} ${year} (${format})`,
+          `Race "${params.race}" not found in ${year} FastF1 schedule`,
         );
       }
+      const allowed = new Set(event.sessions.map((s) => s.code));
+      for (const code of params.sessions) {
+        if (!allowed.has(code)) {
+          const format = event.eventFormat || "unknown format";
+          throw new Error(
+            `${code} is not a session for ${params.race} ${year} (${format})`,
+          );
+        }
+      }
     }
+  } catch (err) {
+    if (isPythonMissing(err)) {
+      console.warn(
+        "[import-catalog] FastF1 schedule unavailable; skipping catalog check:",
+        err instanceof Error ? err.message : err,
+      );
+      return;
+    }
+    throw err;
   }
 }
 
