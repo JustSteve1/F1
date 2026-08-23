@@ -2,6 +2,8 @@
 
 Incremental append of new laps onto [stevefza/f1-2026-bahrain-testing-day-2](https://www.kaggle.com/datasets/stevefza/f1-2026-bahrain-testing-day-2).
 
+Confluence-ready overview (paste into a new page): [confluence-kaggle-incremental-export.md](confluence-kaggle-incremental-export.md).
+
 Kaggle versions replace the file set. Each deploy still uploads one cumulative `All Laps - {date}.csv`: every previous row plus only the new laps.
 
 ## One-time machine setup
