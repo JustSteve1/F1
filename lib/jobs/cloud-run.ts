@@ -103,7 +103,10 @@ export async function triggerCloudRunJob(jobId: string): Promise<string> {
   const data = (await res.json()) as { name?: string; metadata?: { name?: string } };
   const executionName = data.name || data.metadata?.name || `${parent}/executions/unknown`;
   await setCloudRunExecution(jobId, executionName);
-  await appendJobLog(jobId, `Triggered Cloud Run Job execution: ${executionName}`);
+  await appendJobLog(
+    jobId,
+    `Triggered Cloud Run Job execution: ${executionName} (INGEST_SOURCE=${ingestSource})`,
+  );
   return executionName;
 }
 
