@@ -378,6 +378,7 @@ v1 has **no public multi-user auth** for this admin surface. Lock the deployment
 | `GOOGLE_SERVICE_ACCOUNT_KEY` | Full JSON of `~/.config/gcloud/interval-jobs-trigger.json` as one line |
 | `BQ_PROJECT` | `f1-data-library` |
 | `BQ_DATASET` | `f1_data_library_DS` |
+| `INGEST_SOURCE` | `fastf1` (optional; the load API already overrides Cloud Run to FastF1) |
 | Firebase `NEXT_PUBLIC_*` | Same as today |
 
 `GOOGLE_APPLICATION_CREDENTIALS` (file path) and `WORKER_PYTHON` do **not** work on Vercel. The load/jobs APIs skip the FastF1 Python schedule check when `VERCEL=1` (set automatically) or `SKIP_FASTF1_CATALOG=1`. Session codes are still limited to `FP1/FP2/FP3/Q/SQ/S/R`.

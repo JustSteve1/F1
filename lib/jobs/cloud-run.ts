@@ -69,22 +69,31 @@ export async function triggerCloudRunJob(jobId: string): Promise<string> {
   const parent = `projects/${project}/locations/${region}/jobs/${jobName}`;
   const url = `https://run.googleapis.com/v2/${parent}:run`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token.token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      overrides: {
-        containerOverrides: [
-          {
-            env: [{ name: "JOB_ID", value: jobId }],
-          },
-        ],
+    const ingestSource = (
+      process.env.INGEST_SOURCE || "fastf1"
+    ).trim();
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.token}`,
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      body: JSON.stringify({
+        overrides: {
+          containerOverrides: [
+            {
+              env: [
+                { name: "JOB_ID", value: jobId },
+                // Cloud Run job image currently defaults to openf1; race-length
+                // car_data requests 422. Force FastF1 for API-triggered loads.
+                { name: "INGEST_SOURCE", value: ingestSource },
+              ],
+            },
+          ],
+        },
+      }),
+    });
 
   if (!res.ok) {
     const text = await res.text();
