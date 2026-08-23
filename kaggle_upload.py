@@ -1,20 +1,21 @@
 """
 BigQuery → Kaggle export for stevefza/f1-2026-bahrain-testing-day-2
 
-Uses the agreed lap-level schema (telemetry JSON at 0.5s / 2 Hz) and uploads
-a new dataset version via the official Kaggle CLI.
+Default deploy is incremental: download the live Kaggle CSV, export only new
+laps from BigQuery, append them, and publish a new dataset version.
 
 Usage:
     python kaggle_upload.py deploy
     python kaggle_upload.py export --out exports/kaggle
     python kaggle_upload.py upload --dir exports/kaggle
     python kaggle_upload.py --print-sql
+    python kaggle_upload.py deploy --full-refresh
 
 Auth:
-    BigQuery : gcloud auth application-default login
-               or GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json
-    Kaggle   : ~/.kaggle/kaggle.json  OR  KAGGLE_USERNAME + KAGGLE_KEY
-               OR KAGGLE_API_TOKEN (kagglehub uploader)
+    BigQuery : GOOGLE_APPLICATION_CREDENTIALS=/path/to/cursorf1.json
+               or gcloud auth application-default login
+                  --impersonate-service-account=cursorf1@f1-data-library.iam.gserviceaccount.com
+    Kaggle   : KAGGLE_API_TOKEN (preferred) OR ~/.kaggle/kaggle.json
 
 Consumers:
     import kagglehub
@@ -42,6 +43,7 @@ except ImportError:  # optional
 
 ROOT = Path(__file__).resolve().parent
 SQL_PATH = ROOT / "sql" / "kaggle_laps_export.sql"
+KEYS_SQL_PATH = ROOT / "sql" / "kaggle_lap_keys.sql"
 METADATA_PATH = ROOT / "kaggle" / "dataset-metadata.json"
 
 PROJECT = os.environ.get("BQ_PROJECT", "f1-data-library")
@@ -66,10 +68,35 @@ KAGGLE_COLUMNS = [
 TELEMETRY_KEYS = ["t", "speed", "throttle", "brake", "gear", "rpm", "drs", "x", "y", "z"]
 LAP_TIME_RE = re.compile(r"^\d+:\d{2}\.\d{3}$")
 DEDUP_COLS = ["season", "event_name", "session_type", "driver_number", "lap_number"]
+MAX_NEW_LAP_STRUCTS = 4000
 
 
 def _sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def _common_predicates(
+    *,
+    season: int | None,
+    event: str | None,
+    session_type: str | None,
+) -> dict[str, str]:
+    return {
+        "season": f"season = {int(season)}" if season is not None else "TRUE",
+        "event": f"event_name = {_sql_string(event)}" if event else "TRUE",
+        "session": f"session_type = {_sql_string(session_type)}" if session_type else "TRUE",
+    }
+
+
+def _fill_sql(template: str, *, project: str, dataset: str, preds: dict[str, str], new_laps: str = "TRUE") -> str:
+    return (
+        template.replace("{{PROJECT}}", project)
+        .replace("{{DATASET}}", dataset)
+        .replace("{{SEASON_PREDICATE}}", preds["season"])
+        .replace("{{EVENT_PREDICATE}}", preds["event"])
+        .replace("{{SESSION_PREDICATE}}", preds["session"])
+        .replace("{{NEW_LAPS_PREDICATE}}", new_laps)
+    )
 
 
 def render_export_sql(
@@ -79,23 +106,107 @@ def render_export_sql(
     season: int | None = 2026,
     event: str | None = None,
     session_type: str | None = None,
+    new_laps_pred: str = "TRUE",
     sql_path: Path | None = None,
 ) -> str:
     """Render the agreed BigQuery export with optional filters."""
     project = project or PROJECT
     dataset = dataset or DATASET
     sql_path = sql_path or SQL_PATH
-    template = sql_path.read_text()
-    season_pred = f"season = {int(season)}" if season is not None else "TRUE"
-    event_pred = f"event_name = {_sql_string(event)}" if event else "TRUE"
-    session_pred = f"session_type = {_sql_string(session_type)}" if session_type else "TRUE"
-    return (
-        template.replace("{{PROJECT}}", project)
-        .replace("{{DATASET}}", dataset)
-        .replace("{{SEASON_PREDICATE}}", season_pred)
-        .replace("{{EVENT_PREDICATE}}", event_pred)
-        .replace("{{SESSION_PREDICATE}}", session_pred)
+    preds = _common_predicates(season=season, event=event, session_type=session_type)
+    return _fill_sql(
+        sql_path.read_text(),
+        project=project,
+        dataset=dataset,
+        preds=preds,
+        new_laps=new_laps_pred,
     )
+
+
+def render_keys_sql(
+    *,
+    project: str | None = None,
+    dataset: str | None = None,
+    season: int | None = 2026,
+    event: str | None = None,
+    session_type: str | None = None,
+    sql_path: Path | None = None,
+) -> str:
+    """Render the cheap lap-identity query used for incremental diffs."""
+    project = project or PROJECT
+    dataset = dataset or DATASET
+    sql_path = sql_path or KEYS_SQL_PATH
+    preds = _common_predicates(season=season, event=event, session_type=session_type)
+    return _fill_sql(sql_path.read_text(), project=project, dataset=dataset, preds=preds)
+
+
+def new_laps_predicate(keys_df, *, max_structs: int = MAX_NEW_LAP_STRUCTS) -> str:
+    """BigQuery predicate that keeps only the given session_key/driver/lap rows."""
+    if keys_df is None or len(keys_df) == 0:
+        return "FALSE"
+    if len(keys_df) > max_structs:
+        session_keys = sorted({int(k) for k in keys_df["session_key"].dropna()})
+        if not session_keys:
+            return "FALSE"
+        return f"session_key IN ({', '.join(str(k) for k in session_keys)})"
+    parts = []
+    for _, row in keys_df.iterrows():
+        parts.append(
+            "STRUCT<session_key INT64, driver_number INT64, lap_number INT64>"
+            f"({int(row['session_key'])}, {int(row['driver_number'])}, {int(row['lap_number'])})"
+        )
+    return (
+        "(session_key, CAST(driver_number AS INT64), CAST(lap_number AS INT64)) "
+        f"IN UNNEST([{', '.join(parts)}])"
+    )
+
+
+def _normalize_key_frame(df):
+    import pandas as pd
+
+    out = df.copy()
+    for col in ("season", "driver_number", "lap_number"):
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").astype("Int64")
+    for col in ("event_name", "session_type"):
+        if col in out.columns:
+            out[col] = out[col].astype(str)
+    return out
+
+
+def find_new_lap_keys(bq_keys_df, existing_df):
+    """Return BQ key rows that are not already on Kaggle."""
+    import pandas as pd
+
+    if bq_keys_df is None or bq_keys_df.empty:
+        return bq_keys_df if bq_keys_df is not None else pd.DataFrame()
+    if existing_df is None or existing_df.empty:
+        return bq_keys_df
+    left = _normalize_key_frame(bq_keys_df)
+    right = _normalize_key_frame(existing_df)
+    missing = [c for c in DEDUP_COLS if c not in right.columns]
+    if missing:
+        return bq_keys_df
+    merged = left.merge(right[DEDUP_COLS].drop_duplicates(), on=DEDUP_COLS, how="left", indicator=True)
+    return merged.loc[merged["_merge"] == "left_only"].drop(columns=["_merge"])
+
+
+def append_new_laps(existing_df, new_df):
+    """Keep every existing Kaggle row and add only unseen laps."""
+    import pandas as pd
+
+    if existing_df is None or existing_df.empty:
+        return new_df
+    if new_df is None or new_df.empty:
+        return existing_df.loc[:, [c for c in KAGGLE_COLUMNS if c in existing_df.columns]]
+    existing = existing_df.copy()
+    for col in KAGGLE_COLUMNS:
+        if col not in existing.columns:
+            existing[col] = None
+    existing = existing.loc[:, KAGGLE_COLUMNS]
+    new = new_df.loc[:, KAGGLE_COLUMNS]
+    combined = pd.concat([existing, new], ignore_index=True)
+    return combined.drop_duplicates(subset=DEDUP_COLS, keep="first")
 
 
 def _is_missing(value) -> bool:
@@ -186,8 +297,14 @@ def fetch_export(sql: str):
     return df
 
 
+def fetch_bq_keys(*, season: int | None, event: str | None, session_type: str | None):
+    sql = render_keys_sql(season=season, event=event, session_type=session_type)
+    print("  Querying BigQuery lap keys…")
+    return fetch_export(sql)
+
+
 def download_current_kaggle_csv(dest_dir: Path):
-    """Download the live dataset CSV(s) for optional merge. Prefers kagglehub."""
+    """Download the live dataset CSV(s). Prefers kagglehub."""
     import pandas as pd
 
     dest_dir = Path(dest_dir)
@@ -226,23 +343,9 @@ def download_current_kaggle_csv(dest_dir: Path):
     return combined.drop_duplicates(subset=[c for c in DEDUP_COLS if c in combined.columns])
 
 
-def merge_existing(new_df, existing_df):
-    import pandas as pd
-
-    if existing_df is None or existing_df.empty:
-        return new_df
-    existing = existing_df.copy()
-    for col in KAGGLE_COLUMNS:
-        if col not in existing.columns:
-            existing[col] = None
-    existing = existing.loc[:, KAGGLE_COLUMNS]
-    combined = pd.concat([existing, new_df], ignore_index=True)
-    return combined.drop_duplicates(subset=DEDUP_COLS, keep="last")
-
-
 def ensure_kaggle_auth() -> str:
     """
-    Make sure the official Kaggle CLI can authenticate.
+    Make sure the official Kaggle CLI or kagglehub can authenticate.
 
     Returns the uploader that is ready: 'cli' or 'kagglehub'.
     """
@@ -264,9 +367,9 @@ def ensure_kaggle_auth() -> str:
         return "kagglehub"
     raise RuntimeError(
         "Kaggle credentials not found.\n"
+        "  Preferred: set KAGGLE_API_TOKEN\n"
         "  Official CLI: copy kaggle.json to ~/.kaggle/kaggle.json\n"
         "    or set KAGGLE_USERNAME + KAGGLE_KEY\n"
-        "  kagglehub: set KAGGLE_API_TOKEN\n"
         "  Create keys at https://www.kaggle.com/settings/api"
     )
 
@@ -298,32 +401,59 @@ def resolve_uploader(requested: str) -> str:
     if requested == "auto":
         return ready
     if requested == "cli" and ready != "cli":
-        print("  ⚠  Official CLI credentials missing; falling back to kagglehub")
+        print("  Official CLI credentials missing; falling back to kagglehub")
         return "kagglehub"
     if requested == "kagglehub":
         return "kagglehub"
     return requested
 
 
-def cmd_export(args) -> Path:
-    sql = render_export_sql(
-        season=args.season,
-        event=args.event,
-        session_type=args.session_type,
-    )
-    df = fetch_export(sql)
-    validate_schema(df)
+def cmd_export(args) -> Path | None:
+    full_refresh = bool(getattr(args, "full_refresh", False))
+    existing = None
 
-    if args.merge_existing:
-        print("── Merging with current Kaggle CSV…")
+    if full_refresh:
+        print("── Full refresh from BigQuery (not incremental)…")
+        sql = render_export_sql(
+            season=args.season,
+            event=args.event,
+            session_type=args.session_type,
+            new_laps_pred="TRUE",
+        )
+        df = fetch_export(sql)
+        validate_schema(df)
+    else:
+        print("── Incremental append…")
         tmp = Path(tempfile.mkdtemp(prefix="kaggle_dl_"))
         try:
             existing = download_current_kaggle_csv(tmp)
-            print(f"  existing rows: {len(existing):,}")
-            df = merge_existing(df, existing)
-            print(f"  merged rows:   {len(df):,}")
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+        print(f"  existing Kaggle rows: {len(existing):,}")
+
+        bq_keys = fetch_bq_keys(
+            season=args.season,
+            event=args.event,
+            session_type=args.session_type,
+        )
+        new_keys = find_new_lap_keys(bq_keys, existing)
+        already = 0 if bq_keys is None else len(bq_keys) - len(new_keys)
+        print(f"  {len(new_keys):,} new laps / {already:,} already on Kaggle")
+        if new_keys is None or new_keys.empty:
+            print("  Nothing new to export. Kaggle dataset is already up to date.")
+            return None
+
+        pred = new_laps_predicate(new_keys)
+        sql = render_export_sql(
+            season=args.season,
+            event=args.event,
+            session_type=args.session_type,
+            new_laps_pred=pred,
+        )
+        new_df = fetch_export(sql)
+        validate_schema(new_df)
+        df = append_new_laps(existing, new_df)
+        print(f"  combined rows: {len(df):,}")
 
     out_dir = Path(args.out)
     csv_path = write_bundle(df, out_dir)
@@ -345,19 +475,19 @@ def cmd_upload(args) -> None:
     notes = args.version_notes or f"Auto-update: {csvs[0].name}"
     print(f"  Uploading → kaggle.com/datasets/{KAGGLE_DATASET}")
     if args.dry_run:
-        print(f"  dry-run: would run `kaggle datasets version -p {folder} -m {notes}`")
+        print(f"  dry-run: would upload {folder} ({notes})")
         return
     uploader = resolve_uploader(args.uploader)
     if uploader == "cli":
         upload_via_cli(folder, notes)
     else:
         upload_via_kagglehub(folder, notes)
-    print("  ✅  Dataset version uploaded")
+    print("  Dataset version uploaded")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Export agreed-schema F1 laps from BigQuery and update Kaggle via CLI"
+        description="Incrementally append new F1 laps from BigQuery onto the live Kaggle dataset"
     )
     parser.add_argument(
         "command",
@@ -377,12 +507,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Existing folder with CSV + dataset-metadata.json (upload)",
     )
-    parser.add_argument("--merge-existing", action="store_true", help="Append onto the current Kaggle CSV")
+    parser.add_argument(
+        "--full-refresh",
+        action="store_true",
+        help="Rebuild the file from BigQuery only (skip download/diff/append)",
+    )
     parser.add_argument(
         "--uploader",
         choices=["cli", "kagglehub", "auto"],
-        default="cli",
-        help="Upload via official `kaggle datasets version` (default) or kagglehub",
+        default="auto",
+        help="auto uses kagglehub when KAGGLE_API_TOKEN is set (default)",
     )
     parser.add_argument("--version-notes", type=str, default=None)
     parser.add_argument("--dry-run", action="store_true", help="Export (if needed) but do not upload")
@@ -419,10 +553,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    print("\n📤  F1 → Kaggle")
+    print("\nF1 → Kaggle")
     print(f"    BigQuery : {PROJECT}.{DATASET}")
     print(f"    Kaggle   : {KAGGLE_DATASET}")
-    print(f"    Command  : {command}\n")
+    print(f"    Command  : {command}")
+    print(f"    Mode     : {'full-refresh' if args.full_refresh else 'incremental append'}\n")
 
     try:
         if command == "export":
@@ -431,13 +566,16 @@ def main(argv: list[str] | None = None) -> int:
             cmd_upload(args)
         else:
             out = cmd_export(args)
+            if out is None:
+                print("\nDone. No upload needed.\n")
+                return 0
             args.dir = str(out)
             cmd_upload(args)
     except Exception as exc:
-        print(f"\n❌  {exc}", file=sys.stderr)
+        print(f"\n{exc}", file=sys.stderr)
         return 1
 
-    print("\n✅  Done.\n")
+    print("\nDone.\n")
     return 0
 
 

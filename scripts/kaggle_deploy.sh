@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the agreed-schema BigQuery export to Kaggle via the official CLI.
+# Incremental append: new BigQuery laps onto the live Kaggle dataset.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

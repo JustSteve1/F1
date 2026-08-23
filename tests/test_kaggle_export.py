@@ -85,6 +85,17 @@ def test_sql_downsamples_to_half_second():
     assert "MOD(CAST(ROUND(lap_time_sec * 10) AS INT64), 5) = 0" in sql
     assert "TO_JSON_STRING(ta.telemetry)" in sql
     assert "driver_number_mapping" in sql
+    assert "{{NEW_LAPS_PREDICATE}}" in sql
+
+
+def test_keys_sql_is_cheap_identity_query():
+    sql = kag.render_keys_sql()
+    assert "{{" not in sql
+    assert "ARRAY_AGG" not in sql
+    assert "TO_JSON_STRING" not in sql
+    assert "session_key" in sql
+    assert "season = 2026" in sql
+    assert "MOD(CAST(ROUND(lap_time_sec * 10) AS INT64), 5) = 0" in sql
 
 
 def test_render_sql_default_season_and_filters():
@@ -144,13 +155,14 @@ def test_write_bundle_writes_cli_folder(tmp_path):
     assert meta["resources"][0]["path"] == "All Laps - 22 August 2026.csv"
 
 
-def test_merge_existing_keeps_new_schema():
+def test_append_new_laps_keeps_existing_and_adds_unseen():
     existing = pd.DataFrame([sample_row(lap_number=1, driver="SAI")])
     new = pd.DataFrame([sample_row(lap_number=1, driver="LEC"), sample_row(lap_number=2)])
-    merged = kag.merge_existing(new, existing)
+    merged = kag.append_new_laps(existing, new)
     assert len(merged) == 2
     row = merged.loc[merged["lap_number"] == 1].iloc[0]
-    assert row["driver"] == "LEC"
+    assert row["driver"] == "SAI"
+    assert 2 in set(merged["lap_number"])
 
 
 def test_export_filename_matches_live_dataset():
@@ -158,9 +170,9 @@ def test_export_filename_matches_live_dataset():
     assert name == "All Laps - 9 August 2026.csv"
 
 
-def test_parser_help_mentions_cli_upload():
+def test_parser_help_mentions_incremental_default():
     help_text = kag.build_parser().format_help()
-    assert "kaggle datasets version" in help_text
+    assert "full-refresh" in help_text
     assert "stevefza" in kag.KAGGLE_DATASET
 
 
@@ -168,7 +180,8 @@ def test_parser_defaults_to_deploy():
     args = kag.normalize_args(kag.build_parser().parse_args([]))
     assert args.command == "deploy"
     assert args.season == 2026
-    assert args.uploader == "cli"
+    assert args.uploader == "auto"
+    assert args.full_refresh is False
     args = kag.normalize_args(kag.build_parser().parse_args(["--all-seasons", "--print-sql"]))
     assert args.season is None
     assert args.print_sql is True
@@ -194,3 +207,118 @@ def test_upload_dry_run(tmp_path, capsys):
     rc = kag.main(["upload", "--dir", str(tmp_path), "--dry-run"])
     assert rc == 0
     assert "dry-run" in capsys.readouterr().out
+
+
+def _key_row(session_key, lap_number, **overrides):
+    row = {
+        "session_key": session_key,
+        "season": 2026,
+        "event_name": "Bahrain Grand Prix",
+        "session_type": "R",
+        "driver_number": 16,
+        "lap_number": lap_number,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_find_new_lap_keys_returns_only_unseen():
+    bq = pd.DataFrame([_key_row(1, 1), _key_row(1, 2)])
+    existing = pd.DataFrame([sample_row(lap_number=1)])
+    new = kag.find_new_lap_keys(bq, existing)
+    assert list(new["lap_number"]) == [2]
+
+
+def test_find_new_lap_keys_all_new_when_kaggle_empty():
+    bq = pd.DataFrame([_key_row(1, 1)])
+    new = kag.find_new_lap_keys(bq, pd.DataFrame())
+    assert len(new) == 1
+
+
+def test_new_laps_predicate_unnest_and_empty():
+    assert kag.new_laps_predicate(pd.DataFrame()) == "FALSE"
+    keys = pd.DataFrame([_key_row(99, 3)])
+    pred = kag.new_laps_predicate(keys)
+    assert "UNNEST" in pred
+    assert "99" in pred
+    assert "3" in pred
+    sql = kag.render_export_sql(new_laps_pred=pred)
+    assert "{{" not in sql
+    assert pred in sql
+
+
+def test_new_laps_predicate_falls_back_to_session_keys():
+    keys = pd.DataFrame([_key_row(i, 1) for i in range(5)])
+    pred = kag.new_laps_predicate(keys, max_structs=2)
+    assert pred.startswith("session_key IN (")
+    assert "UNNEST" not in pred
+
+
+def test_incremental_export_appends_only_new(monkeypatch, tmp_path):
+    existing = pd.DataFrame([sample_row(lap_number=1, driver="SAI")])
+    bq_keys = pd.DataFrame([_key_row(1, 1), _key_row(1, 2)])
+    new_export = pd.DataFrame([sample_row(lap_number=2)])
+    downloaded = {"n": 0}
+
+    monkeypatch.setattr(kag, "download_current_kaggle_csv", lambda dest: downloaded.__setitem__("n", 1) or existing)
+    monkeypatch.setattr(kag, "fetch_bq_keys", lambda **kwargs: bq_keys)
+    monkeypatch.setattr(kag, "fetch_export", lambda sql: new_export)
+
+    args = kag.normalize_args(kag.build_parser().parse_args(["export", "--out", str(tmp_path)]))
+    out = kag.cmd_export(args)
+    assert out == tmp_path
+    assert downloaded["n"] == 1
+    written = pd.read_csv(next(tmp_path.glob("All Laps*.csv")))
+    assert len(written) == 2
+    assert set(written["lap_number"]) == {1, 2}
+    assert written.loc[written["lap_number"] == 1, "driver"].iloc[0] == "SAI"
+
+
+def test_incremental_export_noop_when_no_new(monkeypatch, tmp_path):
+    existing = pd.DataFrame([sample_row(lap_number=1)])
+    bq_keys = pd.DataFrame([_key_row(1, 1)])
+    monkeypatch.setattr(kag, "download_current_kaggle_csv", lambda dest: existing)
+    monkeypatch.setattr(kag, "fetch_bq_keys", lambda **kwargs: bq_keys)
+
+    def fail_export(_sql):
+        raise AssertionError("full telemetry export should not run when there are no new laps")
+
+    monkeypatch.setattr(kag, "fetch_export", fail_export)
+    args = kag.normalize_args(kag.build_parser().parse_args(["export", "--out", str(tmp_path)]))
+    assert kag.cmd_export(args) is None
+    assert list(tmp_path.glob("*.csv")) == []
+
+
+def test_full_refresh_skips_download_and_diff(monkeypatch, tmp_path):
+    calls = {"download": 0, "keys": 0}
+
+    def fail_download(_dest):
+        calls["download"] += 1
+        raise AssertionError("full-refresh should not download the live Kaggle CSV")
+
+    def fail_keys(**_kwargs):
+        calls["keys"] += 1
+        raise AssertionError("full-refresh should not query lap keys")
+
+    monkeypatch.setattr(kag, "download_current_kaggle_csv", fail_download)
+    monkeypatch.setattr(kag, "fetch_bq_keys", fail_keys)
+    monkeypatch.setattr(kag, "fetch_export", lambda sql: pd.DataFrame([sample_row()]))
+
+    args = kag.normalize_args(
+        kag.build_parser().parse_args(["export", "--full-refresh", "--out", str(tmp_path)])
+    )
+    out = kag.cmd_export(args)
+    assert out == tmp_path
+    assert calls["download"] == 0
+    assert calls["keys"] == 0
+    assert next(tmp_path.glob("All Laps*.csv")).exists()
+
+
+def test_deploy_skips_upload_when_up_to_date(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(kag, "cmd_export", lambda _args: None)
+    uploaded = {"n": 0}
+    monkeypatch.setattr(kag, "cmd_upload", lambda _args: uploaded.__setitem__("n", uploaded["n"] + 1))
+    rc = kag.main(["deploy", "--out", str(tmp_path)])
+    assert rc == 0
+    assert uploaded["n"] == 0
+    assert "No upload needed" in capsys.readouterr().out

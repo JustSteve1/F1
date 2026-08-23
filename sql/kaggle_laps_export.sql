@@ -25,6 +25,7 @@ WITH
       {{SEASON_PREDICATE}}
       AND {{EVENT_PREDICATE}}
       AND {{SESSION_PREDICATE}}
+      AND {{NEW_LAPS_PREDICATE}}
       AND MOD(CAST(ROUND(lap_time_sec * 10) AS INT64), 5) = 0
       AND speed IS NOT NULL
   ),
@@ -64,6 +65,7 @@ WITH
       {{SEASON_PREDICATE}}
       AND {{EVENT_PREDICATE}}
       AND {{SESSION_PREDICATE}}
+      AND {{NEW_LAPS_PREDICATE}}
   )
 
 SELECT
