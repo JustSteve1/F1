@@ -44,3 +44,10 @@ next-env.d.ts
 # python worker
 worker/.venv/
 worker/**/__pycache__/
+
+# GCP bootstrap / reader keys — never commit
+/tmp/gcp-bootstrap.json
+/tmp/cursor-bq-reader-key.json
+/tmp/google-service-account-key.json
+service-account*.json
+*-sa-key.json
