@@ -1,3 +1,5 @@
+# Vercel deploys the Next.js app from GitHub `main` (Production) and PRs (Preview).
+# Python worker is Cloud Run (`worker/`), not this serverless build.
 worker/.venv
 **/__pycache__
 exceptions_*.csv

@@ -2,6 +2,20 @@
 
 Private admin UI to **create / cancel / retry** FastF1 → BigQuery → Kaggle import jobs, with live step progress and failure logs.
 
+## One trunk
+
+| Surface | What it is |
+|---------|------------|
+| GitHub **`main`** | This Next.js app + [`worker/`](./worker/). Production git ref. |
+| Vercel **Production** | Must deploy **`main`** (Settings → Git → Production Branch). |
+| Vercel **Preview** | PRs off `main` (e.g. `MVP2`). Same job env as Production. |
+| Worker | Cloud Run Job `f1-telemetry-import`, built from `worker/`. Not Vercel. |
+| FastF1 seed / catalog | Laptop (consumer IP) or Cloud Run. **Never Python on Vercel.** |
+
+There is no `front-end` branch and no Python-only `main`. Legacy snapshots: tags `legacy-python-main` and `legacy-front-end`. Do not add a repo-root `f1_telemetry_import.py` or OpenF1 ingest.
+
+Vercel Node has no FastF1. [`lib/jobs/import-catalog.ts`](./lib/jobs/import-catalog.ts) skips the Python schedule check when `VERCEL=1` (yellow banner on `/admin/jobs` is expected). Session codes are still validated in JS (`FP1/FP2/FP3/Q/SQ/S/R`).
+
 | Layer | Store |
 |-------|--------|
 | Control plane (jobs, steps, %, logs) | **Postgres** (`DATABASE_URL`) — Cloud SQL `interval-jobs` |
@@ -169,15 +183,15 @@ gsutil iam ch \
   gs://f1-data-library-fastf1-cache
 ```
 
-**Seed cache from a machine that can load FastF1 (e.g. Monaco 2026 Q):**
+**Seed cache from a home/consumer IP** (F1 livetiming blocks Cloud Run, Colab, and other datacenter IPs):
 
 ```bash
 export FASTF1_CACHE_GCS_URI=gs://f1-data-library-fastf1-cache/fastf1
 python3 worker/pipeline/seed_fastf1_cache.py \
   --year 2026 --race "Monaco Grand Prix" --session Q R
 
-# Or manually:
-# gsutil -m rsync -r ~/.cache/fastf1 gs://f1-data-library-fastf1-cache/fastf1
+# Upload (macOS: use gcloud storage, not gsutil -m — sys.maxint):
+gcloud storage rsync --recursive ~/.cache/fastf1 gs://f1-data-library-fastf1-cache/fastf1
 ```
 
 ### Rebuild / update the worker image
@@ -218,6 +232,7 @@ gcloud run jobs update f1-telemetry-import \
 | `GET /api/admin/jobs` | List |
 | `GET /api/admin/jobs/[id]` | Detail (+ steps + recent logs) |
 | `POST /api/admin/jobs/[id]/cancel` | Set `cancelling` (worker stops between steps) |
+| `POST /api/admin/jobs/[id]/fail` | Force-fail `queued` / `running` / `cancelling` (zombies) |
 | `POST /api/admin/jobs/[id]/retry` | Clone params → new job + trigger |
 | `POST /api/admin/import/load` | Load-focused create + trigger (FastF1 → BQ) |
 | `GET /api/admin/import/status` | BQ presence + row counts for a race |
@@ -284,24 +299,25 @@ Uses the same read credentials as the import catalog (`GOOGLE_SERVICE_ACCOUNT_KE
 
 FastF1 event name: **`Dutch Grand Prix`**. Sprint-format sessions: **`FP1`, `SQ`, `S`, `Q`, `R`** (no FP2/FP3).
 
-**End-to-end load (after Colab seed):**
+**End-to-end load (after Mac seed → GCS):**
 
 ```bash
-# 1. Seed cache (Colab notebook or seed_fastf1_cache.py) → gs://f1-data-library-fastf1-cache/fastf1
+# 1. Seed on a home IP, then:
+gcloud storage rsync --recursive ~/.cache/fastf1 gs://f1-data-library-fastf1-cache/fastf1
 
-# 2. Trigger load
-curl -X POST "https://<preview>/api/admin/import/load" \
+# 2. Trigger load (Production = main; Preview = PR)
+curl -X POST "https://<host>/api/admin/import/load" \
   -H "Content-Type: application/json" \
   -d '{"year":2026,"race":"Dutch Grand Prix","sessions":["FP1"]}'
 
 # 3. Poll job
-curl "https://<preview>/api/admin/jobs/{jobId}"
+curl "https://<host>/api/admin/jobs/{jobId}"
 
 # 4. Verify BQ presence
-curl "https://<preview>/api/admin/import/status?year=2026&race=Dutch%20Grand%20Prix"
+curl "https://<host>/api/admin/import/status?year=2026&race=Dutch%20Grand%20Prix"
 ```
 
-If GCS cache is missing for the race, the worker fails fast with: *Seed FastF1 cache first (Colab notebook or seed_fastf1_cache.py).*
+If GCS cache is missing for the race, the worker fails fast: seed with `worker/pipeline/seed_fastf1_cache.py` from a consumer IP, then `gcloud storage rsync`. Do not retry livetiming from Cloud Run or Colab.
 
 ## Local development
 
@@ -355,35 +371,46 @@ Open [http://localhost:3000/admin/jobs](http://localhost:3000/admin/jobs).
 
 With `JOB_WORKER_MODE=stub`, creating a job simulates the full step timeline so you can verify polling / cancel / retry without BigQuery.
 
-## Deploy preview + Deployment Protection
+## Deploy: Production (`main`) + Preview (PRs)
 
-v1 has **no public multi-user auth** for this admin surface. Lock the deployment:
+v1 has **no public multi-user auth** for this admin surface. Lock deployments:
 
-1. Push / open a PR from `feature/jobs-admin-v1` (or deploy the branch in Vercel)
-2. Vercel → project → **Deployments** → promote / open the **Preview** URL for this branch
-3. Vercel → **Settings** → **Deployment Protection**
-4. Enable **Vercel Authentication** (or Password Protection)
+1. Vercel → **Settings → Git → Production Branch = `main`**
+2. Open a PR into `main` (working branch **`MVP2`**) for Preview
+3. Vercel → **Settings → Deployment Protection**
+4. Enable **Vercel Authentication** (or Password Protection) for Preview **and** Production
 5. Restrict to your team / yourself
-6. Protect **Preview** (and Production when you promote)
 
-### Vercel env vars to set (Preview)
+### Required env: Preview **and** Production
 
-| Key | Notes |
-|-----|--------|
-| `DATABASE_URL` | Cloud SQL public URL with `?sslmode=require` (from `interval-jobs-database-url.txt`) |
-| `JOB_WORKER_MODE` | `cloud_run` |
+Set the **same** keys on both environments. Stub mode on Production/Preview looks like a successful load but never writes BigQuery.
+
+| Key | Value / notes |
+|-----|----------------|
+| `DATABASE_URL` | Cloud SQL public URL with `?sslmode=require` |
+| `JOB_WORKER_MODE` | **`cloud_run`** (not `stub`) |
 | `GCP_PROJECT_ID` | `f1-data-library` |
 | `CLOUD_RUN_REGION` | `europe-west1` |
 | `CLOUD_RUN_JOB_NAME` | `f1-telemetry-import` |
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | Full JSON of `~/.config/gcloud/interval-jobs-trigger.json` as one line |
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | Full trigger-SA JSON as **one line** (not a file path) |
 | `BQ_PROJECT` | `f1-data-library` |
 | `BQ_DATASET` | `f1_data_library_DS` |
-| `INGEST_SOURCE` | `fastf1` (optional; the load API already overrides Cloud Run to FastF1) |
-| Firebase `NEXT_PUBLIC_*` | Same as today |
+| `INGEST_SOURCE` | `fastf1` |
+| Firebase `NEXT_PUBLIC_*` | Same as the product app |
 
-`GOOGLE_APPLICATION_CREDENTIALS` (file path) and `WORKER_PYTHON` do **not** work on Vercel. The load/jobs APIs skip the FastF1 Python schedule check when `VERCEL=1` (set automatically) or `SKIP_FASTF1_CATALOG=1`. Session codes are still limited to `FP1/FP2/FP3/Q/SQ/S/R`.
+`GOOGLE_APPLICATION_CREDENTIALS` (file path) and `WORKER_PYTHON` do **not** work on Vercel. FastF1 catalog is skipped when `VERCEL=1`. Session codes remain `FP1/FP2/FP3/Q/SQ/S/R`.
 
-Also authorize Vercel egress (see connectivity section) before preview can talk to Cloud SQL.
+Also authorize Vercel egress (see connectivity) before Preview or Production can talk to Cloud SQL.
+
+**Checklist before treating a deploy as real:**
+
+- [ ] GitHub default branch is `main` (Next.js tree, not the old Python tag)
+- [ ] Vercel Production Branch is `main`
+- [ ] Preview and Production both have `JOB_WORKER_MODE=cloud_run`
+- [ ] `GOOGLE_SERVICE_ACCOUNT_KEY` is JSON, not a path
+- [ ] `DATABASE_URL` with `sslmode=require` on both
+- [ ] `GCP_PROJECT_ID` / `CLOUD_RUN_JOB_NAME` set on both
+- [ ] Creating a job logs `Triggered Cloud Run Job execution` (not stub)
 
 ## First real job (Monaco)
 
@@ -391,7 +418,7 @@ Also authorize Vercel egress (see connectivity section) before preview can talk 
 
 1. Confirm Cloud Run Job exists; dry-run execution succeeds
 2. `gcloud run jobs update … --remove-env-vars=WORKER_DRY_RUN`
-3. Open `/admin/jobs` (preview or local with `JOB_WORKER_MODE=cloud_run`)
+3. Open `/admin/jobs` (Production `main`, Preview PR, or local with `JOB_WORKER_MODE=cloud_run`)
 4. Create:
    - year: `2026`
    - race: `Monaco Grand Prix`
@@ -430,4 +457,4 @@ gcloud run jobs describe f1-telemetry-import \
 | Skip laps_unified | `--skip-unified` |
 | Include Kaggle upload | runs `kaggle_upload.py` after import |
 
-Source scripts live under `worker/pipeline/` (adapted from `JustSteve1/F1` `main` + `kaggle-upload`).
+Source scripts live under `worker/pipeline/` only.
