@@ -35,4 +35,4 @@ pnpm dev
 | **Production** | `main` | Live app. Set this in Vercel → Settings → Git → Production Branch. |
 | **Preview** | PRs (e.g. `MVP2`) | Same env as Production for jobs (`JOB_WORKER_MODE=cloud_run`, JSON SA, `DATABASE_URL`). |
 
-Enable **Deployment Protection** (see ADMIN_JOBS.md). Vercel has no Python: FastF1 schedule catalog is skipped (`VERCEL=1`). Seed FastF1 cache and run the worker locally or on Cloud Run — never on Vercel.
+Enable **Deployment Protection** (see ADMIN_JOBS.md). Vercel has no Python: FastF1 schedule catalog is skipped (`VERCEL=1`). Seed FastF1 cache from a home/Mac IP with `gcloud storage rsync` (not `gsutil -m rsync`) and run the worker on Cloud Run — never on Vercel. The jobs form warns when GCS has no folder for the selected race.

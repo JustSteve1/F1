@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "pipeline"))
 
 import db  # noqa: E402
+from ingest_source import assert_fastf1_ingest  # noqa: E402
 
 STEP_ORDER = [
     "load_fastf1",
@@ -411,6 +412,8 @@ def run(job_id: str) -> int:
     )
 
     try:
+        source = assert_fastf1_ingest()
+        db.append_log(job_id, f"INGEST_SOURCE={source}")
         if os.environ.get("WORKER_DRY_RUN", "").lower() in {"1", "true", "yes"}:
             db.append_log(job_id, "WORKER_DRY_RUN enabled — skipping FastF1/BQ")
             _dry_run(job_id, params)

@@ -72,7 +72,7 @@ gcloud sql instances patch interval-jobs --project=f1-data-library \
 
 ### IAM (worker / trigger)
 
-- **Trigger SA:** `roles/run.developer` (execute Cloud Run Jobs)
+- **Trigger SA:** `roles/run.developer` (execute Cloud Run Jobs); `roles/storage.objectViewer` on `gs://f1-data-library-fastf1-cache` (admin cache listing)
 - **Worker SA:** `roles/bigquery.jobUser`, `roles/bigquery.dataEditor`, `roles/cloudsql.client`
 - **Worker SA (FastF1 cache):** `roles/storage.objectAdmin` on `gs://f1-data-library-fastf1-cache`
 - **Worker SA (Kaggle secrets):** `roles/secretmanager.secretAccessor` on `kaggle-username` + `kaggle-key` (or `kaggle-api-token`)
@@ -181,18 +181,25 @@ gsutil mb -p f1-data-library -l europe-west1 -b on gs://f1-data-library-fastf1-c
 gsutil iam ch \
   serviceAccount:interval-jobs-worker@f1-data-library.iam.gserviceaccount.com:roles/storage.objectAdmin \
   gs://f1-data-library-fastf1-cache
+gsutil iam ch \
+  serviceAccount:interval-jobs-trigger@f1-data-library.iam.gserviceaccount.com:roles/storage.objectViewer \
+  gs://f1-data-library-fastf1-cache
 ```
 
-**Seed cache from a home/consumer IP** (F1 livetiming blocks Cloud Run, Colab, and other datacenter IPs):
+**Seed cache from a home/consumer IP** (F1 livetiming blocks Cloud Run, Colab, and other datacenter IPs). **macOS:** do not use `gsutil -m rsync` — gsutil’s multiprocess rsync uses Python 2 `sys.maxint` and crashes. Use `gcloud storage rsync`:
 
 ```bash
 export FASTF1_CACHE_GCS_URI=gs://f1-data-library-fastf1-cache/fastf1
 python3 worker/pipeline/seed_fastf1_cache.py \
   --year 2026 --race "Monaco Grand Prix" --session Q R
 
-# Upload (macOS: use gcloud storage, not gsutil -m — sys.maxint):
+# Upload (macOS: gcloud storage, not gsutil -m — sys.maxint):
 gcloud storage rsync --recursive ~/.cache/fastf1 gs://f1-data-library-fastf1-cache/fastf1
 ```
+
+The Create Job form calls `GET /api/admin/import/cache` and warns when that race has no folder under `gs://f1-data-library-fastf1-cache/fastf1/{year}/`. Sessions missing from the cache show a **no GCS** badge. Do not retry livetiming from Cloud Run or Colab.
+
+Worker boot fails (job marked `failed`, exit 2) if `INGEST_SOURCE` is set to anything other than `fastf1`. Unset is treated as FastF1. OpenF1 is not a fallback.
 
 ### Resample checkpoint (same `JOB_ID`)
 
@@ -247,6 +254,7 @@ gcloud run jobs update f1-telemetry-import \
 | `POST /api/admin/jobs/[id]/retry` | Clone params → new job + trigger |
 | `POST /api/admin/import/load` | Load-focused create + trigger (FastF1 → BQ) |
 | `GET /api/admin/import/status` | BQ presence + row counts for a race |
+| `GET /api/admin/import/cache` | FastF1 GCS cache folders for a year/race |
 
 ## Session Load API
 
@@ -305,6 +313,46 @@ GET /api/admin/import/status?year=2026&race=Dutch%20Grand%20Prix&sessions=FP1,SQ
 ```
 
 Uses the same read credentials as the import catalog (`GOOGLE_SERVICE_ACCOUNT_KEY` or ADC).
+
+### `GET /api/admin/import/cache`
+
+Lists seeded FastF1 folders in GCS (not livetiming, not BigQuery):
+
+```
+GET /api/admin/import/cache?year=2026
+GET /api/admin/import/cache?year=2026&race=Dutch%20Grand%20Prix
+GET /api/admin/import/cache?year=2026&race=Dutch%20Grand%20Prix&sessions=FP1,R
+```
+
+**Response `200`:**
+
+```json
+{
+  "year": 2026,
+  "race": "Dutch Grand Prix",
+  "bucket": "f1-data-library-fastf1-cache",
+  "prefix": "fastf1/",
+  "uri": "gs://f1-data-library-fastf1-cache/fastf1",
+  "readable": true,
+  "present": true,
+  "events": [
+    {
+      "folder": "2026-08-23_Dutch_Grand_Prix",
+      "uri": "gs://f1-data-library-fastf1-cache/fastf1/2026/2026-08-23_Dutch_Grand_Prix",
+      "sessions": [
+        { "folder": "2026-08-23_Practice_1", "code": "FP1" },
+        { "folder": "2026-08-29_Race", "code": "R" }
+      ]
+    }
+  ],
+  "sessionCodes": ["FP1", "R"],
+  "missingSessionCodes": [],
+  "error": null,
+  "hint": "Seed from a home/Mac IP … gcloud storage rsync --recursive …"
+}
+```
+
+`present: false` means Cloud Run will fail fast for that race until you seed. `readable: false` means the trigger SA cannot list the bucket — grant `roles/storage.objectViewer`. Override the URI with `FASTF1_CACHE_GCS_URI` (default `gs://f1-data-library-fastf1-cache/fastf1`).
 
 ### Dutch Grand Prix 2026 (sprint weekend)
 
@@ -406,7 +454,8 @@ Set the **same** keys on both environments. Stub mode on Production/Preview look
 | `GOOGLE_SERVICE_ACCOUNT_KEY` | Full trigger-SA JSON as **one line** (not a file path) |
 | `BQ_PROJECT` | `f1-data-library` |
 | `BQ_DATASET` | `f1_data_library_DS` |
-| `INGEST_SOURCE` | `fastf1` |
+| `INGEST_SOURCE` | `fastf1` (anything else fails worker boot) |
+| `FASTF1_CACHE_GCS_URI` | Optional. Default `gs://f1-data-library-fastf1-cache/fastf1` |
 | Firebase `NEXT_PUBLIC_*` | Same as the product app |
 
 `GOOGLE_APPLICATION_CREDENTIALS` (file path) and `WORKER_PYTHON` do **not** work on Vercel. FastF1 catalog is skipped when `VERCEL=1`. Session codes remain `FP1/FP2/FP3/Q/SQ/S/R`.

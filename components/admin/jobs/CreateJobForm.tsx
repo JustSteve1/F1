@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PipelineFlow } from "@/components/admin/pipeline/PipelineFlow";
+import type { Fastf1CacheStatus } from "@/lib/jobs/fastf1-cache-types";
 import type { SessionType } from "@/lib/jobs/steps";
 import type { CatalogEvent, ImportCatalog } from "@/lib/jobs/session-map";
 
@@ -23,6 +24,8 @@ export function CreateJobForm({ onCreated }: Props) {
   const [includeKaggle, setIncludeKaggle] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [cache, setCache] = useState<Fastf1CacheStatus | null>(null);
+  const [cacheLoading, setCacheLoading] = useState(false);
 
   const primaryYear = useMemo(() => {
     const first = years
@@ -73,6 +76,38 @@ export function CreateJobForm({ onCreated }: Props) {
     if (catalogYear === primaryYear && catalog) return;
     void loadCatalog(primaryYear);
   }, [primaryYear, catalogYear, catalog, loadCatalog]);
+
+  useEffect(() => {
+    if (primaryYear == null || !race) {
+      setCache(null);
+      setCacheLoading(false);
+      return;
+    }
+    const ac = new AbortController();
+    setCacheLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/admin/import/cache?year=${primaryYear}&race=${encodeURIComponent(race)}`,
+          { signal: ac.signal, cache: "no-store" },
+        );
+        const data = await res.json();
+        if (ac.signal.aborted) return;
+        if (!res.ok) {
+          setCache(null);
+          return;
+        }
+        setCache(data as Fastf1CacheStatus);
+      } catch (err) {
+        if (ac.signal.aborted) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setCache(null);
+      } finally {
+        if (!ac.signal.aborted) setCacheLoading(false);
+      }
+    })();
+    return () => ac.abort();
+  }, [primaryYear, race]);
 
   const eventSessionKey = selectedEvent
     ? `${selectedEvent.eventName}:${selectedEvent.sessions.map((s) => s.code).join(",")}`
@@ -150,6 +185,11 @@ export function CreateJobForm({ onCreated }: Props) {
     sessions.length > 0 &&
     primaryYear != null;
 
+  const cacheSessionCodes = useMemo(
+    () => new Set(cache?.sessionCodes ?? []),
+    [cache],
+  );
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -161,7 +201,8 @@ export function CreateJobForm({ onCreated }: Props) {
         </h2>
         <p className="mt-1 text-xs text-white/45">
           FastF1 schedule → BigQuery → optional Kaggle. Sessions are limited to
-          what exists for the selected event.
+          what exists for the selected event. Cloud Run needs a seeded GCS
+          cache; livetiming will not work from a datacenter IP.
         </p>
       </div>
 
@@ -225,6 +266,15 @@ export function CreateJobForm({ onCreated }: Props) {
         </p>
       )}
 
+      {race && primaryYear != null && (
+        <CacheBanner
+          year={primaryYear}
+          race={race}
+          cache={cache}
+          loading={cacheLoading}
+        />
+      )}
+
       <div className="space-y-2">
         <span className="text-[11px] font-bold uppercase tracking-widest text-white/50">
           Sessions
@@ -257,6 +307,13 @@ export function CreateJobForm({ onCreated }: Props) {
                       }`}
                     >
                       in BQ
+                    </span>
+                  ) : null}
+                  {cache?.readable &&
+                  cache.present &&
+                  !cacheSessionCodes.has(session.code) ? (
+                    <span className="ml-2 text-[10px] uppercase tracking-widest text-amber-400/90">
+                      no GCS
                     </span>
                   ) : null}
                 </button>
@@ -344,5 +401,73 @@ function Toggle({
       />
       {label}
     </label>
+  );
+}
+
+function CacheBanner({
+  year,
+  race,
+  cache,
+  loading,
+}: {
+  year: number;
+  race: string;
+  cache: Fastf1CacheStatus | null;
+  loading: boolean;
+}) {
+  if (loading && !cache) {
+    return (
+      <p className="text-xs text-white/40 border border-white/10 px-3 py-2">
+        Checking FastF1 GCS cache…
+      </p>
+    );
+  }
+  if (!cache) {
+    return (
+      <p className="text-sm text-amber-300 border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+        Could not check FastF1 GCS cache for {year} {race}. Cloud Run still
+        needs a seeded folder. Use{" "}
+        <code className="text-[11px] text-amber-100">
+          gcloud storage rsync --recursive ~/.cache/fastf1
+          gs://f1-data-library-fastf1-cache/fastf1
+        </code>{" "}
+        from a home IP (not <code className="text-[11px]">gsutil -m rsync</code>{" "}
+        on macOS).
+      </p>
+    );
+  }
+  if (!cache.readable) {
+    return (
+      <p className="text-sm text-amber-300 border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+        {cache.error || "Could not list FastF1 GCS cache."} Grant{" "}
+        <code className="text-[11px] text-amber-100">
+          roles/storage.objectViewer
+        </code>{" "}
+        on the cache bucket to the trigger SA, then refresh.
+      </p>
+    );
+  }
+  if (!cache.present) {
+    const folders = cache.events.map((e) => e.folder).join(", ");
+    return (
+      <p className="text-sm text-amber-300 border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+        No FastF1 GCS cache for {year} {race}
+        {folders ? ` (found ${folders})` : ""}. Cloud Run cannot download
+        livetiming. Seed on a home/Mac IP, then run{" "}
+        <code className="text-[11px] text-amber-100">
+          gcloud storage rsync --recursive ~/.cache/fastf1
+          gs://f1-data-library-fastf1-cache/fastf1
+        </code>
+        . Do not use <code className="text-[11px]">gsutil -m rsync</code> on
+        macOS (sys.maxint).
+      </p>
+    );
+  }
+  const folder = cache.events.map((e) => e.folder).join(", ");
+  const codes = cache.sessionCodes.join(", ") || "session folders";
+  return (
+    <p className="text-xs text-emerald-300/80 border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+      GCS cache: {folder} · {codes}
+    </p>
   );
 }

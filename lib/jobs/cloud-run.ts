@@ -9,6 +9,18 @@ export function getWorkerMode(): WorkerMode {
   return "stub";
 }
 
+export function requireFastf1IngestSource(
+  raw: string | undefined = process.env.INGEST_SOURCE,
+): "fastf1" {
+  const source = (raw || "fastf1").trim().toLowerCase() || "fastf1";
+  if (source !== "fastf1") {
+    throw new Error(
+      `INGEST_SOURCE=${source} is not supported; v1 ingest is FastF1 only`,
+    );
+  }
+  return "fastf1";
+}
+
 /**
  * Resolve GCP credentials for Cloud Run Jobs triggers.
  *
@@ -17,7 +29,7 @@ export function getWorkerMode(): WorkerMode {
  * 2. GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY — split env vars
  * 3. GOOGLE_APPLICATION_CREDENTIALS / ADC — local path or ambient credentials
  */
-function getGoogleAuth(): GoogleAuth {
+export function getGoogleAuth(): GoogleAuth {
   const scopes = ["https://www.googleapis.com/auth/cloud-platform"];
   const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY?.trim();
   if (keyJson) {
@@ -51,6 +63,7 @@ function getGoogleAuth(): GoogleAuth {
  * Uses JSON key env vars (Vercel) or ADC / key file (local).
  */
 export async function triggerCloudRunJob(jobId: string): Promise<string> {
+  const ingestSource = requireFastf1IngestSource();
   const project = process.env.GCP_PROJECT_ID;
   const region = process.env.CLOUD_RUN_REGION || "europe-west1";
   const jobName = process.env.CLOUD_RUN_JOB_NAME || "f1-telemetry-import";
@@ -69,31 +82,27 @@ export async function triggerCloudRunJob(jobId: string): Promise<string> {
   const parent = `projects/${project}/locations/${region}/jobs/${jobName}`;
   const url = `https://run.googleapis.com/v2/${parent}:run`;
 
-    const ingestSource = (
-      process.env.INGEST_SOURCE || "fastf1"
-    ).trim();
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token.token}`,
-        "Content-Type": "application/json",
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token.token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      overrides: {
+        containerOverrides: [
+          {
+            env: [
+              { name: "JOB_ID", value: jobId },
+              // Pin FastF1 until the Cloud Run job image default is rebuilt
+              // (lesson 5). Live image still defaults to openf1.
+              { name: "INGEST_SOURCE", value: ingestSource },
+            ],
+          },
+        ],
       },
-      body: JSON.stringify({
-        overrides: {
-          containerOverrides: [
-            {
-              env: [
-                { name: "JOB_ID", value: jobId },
-                // Cloud Run job image currently defaults to openf1; race-length
-                // car_data requests 422. Force FastF1 for API-triggered loads.
-                { name: "INGEST_SOURCE", value: ingestSource },
-              ],
-            },
-          ],
-        },
-      }),
-    });
+    }),
+  });
 
   if (!res.ok) {
     const text = await res.text();

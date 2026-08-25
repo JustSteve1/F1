@@ -16,7 +16,27 @@ def main() -> int:
     # Allow importing sibling modules when run as a script
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+    from ingest_source import assert_fastf1_ingest, ingest_source
+    import db
     from job_runner import run
+
+    print(f"INGEST_SOURCE={ingest_source()}", flush=True)
+    try:
+        assert_fastf1_ingest()
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        try:
+            db.update_job(
+                job_id,
+                status="failed",
+                finished=True,
+                error=str(exc),
+                status_message="Unsupported ingest source",
+            )
+            db.append_log(job_id, str(exc), level="error")
+        except Exception:
+            pass
+        return 2
 
     return run(job_id)
 
