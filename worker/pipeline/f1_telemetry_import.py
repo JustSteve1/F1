@@ -220,6 +220,36 @@ def load_dataframe(
     }
 
 
+def session_keys_for_loaded(loaded_sessions) -> list[int]:
+    keys: list[int] = []
+    for (year, stype), session in loaded_sessions.items():
+        keys.append(
+            generate_session_key(year, session.event["EventName"], stype)
+        )
+    return keys
+
+
+def delete_session_rows(client, session_keys, tables, *, log=print) -> None:
+    """Remove existing warehouse rows for these session_keys (replace, not append)."""
+    keys = [int(k) for k in session_keys if k is not None]
+    if not keys:
+        return
+    key_list = ", ".join(str(k) for k in keys)
+    for table in tables:
+        q = (
+            f"DELETE FROM `{PROJECT}.{DATASET}.{table}` "
+            f"WHERE session_key IN ({key_list})"
+        )
+        job = client.query(q)
+        job.result()
+        affected = job.num_dml_affected_rows
+        log(
+            f"Deleted {affected if affected is not None else '?'} "
+            f"{table} row(s) for session_key IN ({key_list}) "
+            f"(job {job.job_id})"
+        )
+
+
 # ── Step 1: Check existing data ───────────────────────────────────────────────
 
 def check_existing(client, years, race, session_types):
@@ -566,8 +596,11 @@ def extract_telemetry(loaded_sessions):
 
 def upload_sessions_and_laps(client, loaded_sessions, laps_df, race, *, log=print, job_id=None):
     now = datetime.now(timezone.utc).isoformat()
+    keys = session_keys_for_loaded(loaded_sessions)
+    # Replace this session's facts; do not append duplicates on retry.
+    delete_session_rows(client, keys, ("laps", "telemetry"), log=log)
 
-    # Sessions — small; streaming insert is fine
+    # Sessions — skip if session_key already present
     sessions_rows = []
     for (year, stype), session in loaded_sessions.items():
         sk = generate_session_key(year, session.event["EventName"], stype)
@@ -587,31 +620,38 @@ def upload_sessions_and_laps(client, loaded_sessions, laps_df, race, *, log=prin
             "imported_at": now,
         })
 
-    errors = client.insert_rows_json(f"{PROJECT}.{DATASET}.sessions", sessions_rows)
-    if errors:
-        log(f"Session upload errors: {errors[:2]}")
-    else:
-        log(f"{len(sessions_rows)} session(s) uploaded")
+    existing_sk: set[int] = set()
+    if keys:
+        key_list = ", ".join(str(k) for k in keys)
+        try:
+            existing_df = client.query(
+                f"SELECT session_key FROM `{PROJECT}.{DATASET}.sessions` "
+                f"WHERE session_key IN ({key_list})"
+            ).to_dataframe()
+            existing_sk = {int(v) for v in existing_df["session_key"].tolist()}
+        except Exception as exc:
+            log(f"Session existence check failed (inserting all): {exc}")
 
-    # Laps — full schema (Cell 7 style)
+    new_sessions = [r for r in sessions_rows if r["session_key"] not in existing_sk]
+    skipped = len(sessions_rows) - len(new_sessions)
+    if skipped:
+        log(f"Skip {skipped} existing session row(s)")
+    if new_sessions:
+        errors = client.insert_rows_json(
+            f"{PROJECT}.{DATASET}.sessions", new_sessions
+        )
+        if errors:
+            log(f"Session upload errors: {errors[:2]}")
+        else:
+            log(f"{len(new_sessions)} session(s) uploaded")
+    elif not sessions_rows:
+        log("No sessions to upload")
+
+    # Laps — full schema; session already wiped
     laps_full = []
     for (year, stype), session in loaded_sessions.items():
         sk = generate_session_key(year, session.event["EventName"], stype)
-        # Dedup check
-        check_q = f"""
-            SELECT CONCAT(CAST(session_key AS STRING), '-', driver_number, '-', CAST(lap_number AS STRING)) as lap_id
-            FROM `{PROJECT}.{DATASET}.laps`
-            WHERE session_key = {sk}
-        """
-        try:
-            existing_ids = set(client.query(check_q).to_dataframe()["lap_id"].tolist())
-        except Exception:
-            existing_ids = set()
-
         for _, lap in session.laps.iterrows():
-            lap_id = f"{sk}-{lap.get('DriverNumber')}-{lap.get('LapNumber')}"
-            if lap_id in existing_ids:
-                continue
             laps_full.append({
                 "session_key": sk,
                 "meeting_key": sk,
@@ -676,6 +716,8 @@ def upload_telemetry(client, telemetry_df, loaded_sessions, *, log=print, job_id
         lambda r: generate_session_key(r["season"], r["event_name"], r["session_type"]), axis=1
     )
     telemetry_df["meeting_key"] = telemetry_df["session_key"]
+    keys = sorted({int(k) for k in telemetry_df["session_key"].tolist()})
+    delete_session_rows(client, keys, ("telemetry",), log=log)
 
     cols = [
         "session_key", "meeting_key", "season", "driver_number", "lap_number",

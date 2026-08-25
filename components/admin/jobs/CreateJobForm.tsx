@@ -268,7 +268,7 @@ export function CreateJobForm({ onCreated }: Props) {
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Toggle
-          label="No skip (re-import existing)"
+          label="No skip (replace session in BQ)"
           checked={noSkip}
           onChange={setNoSkip}
         />

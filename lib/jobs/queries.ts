@@ -214,6 +214,38 @@ export async function requestCancel(id: string): Promise<JobRow | null> {
   return mapJob(res.rows[0]);
 }
 
+export async function forceFailJob(
+  id: string,
+  reason: string,
+): Promise<JobRow | null> {
+  const res = await query(
+    `UPDATE jobs
+     SET status = 'failed',
+         finished_at = COALESCE(finished_at, now()),
+         error = $2,
+         status_message = $2,
+         updated_at = now()
+     WHERE id = $1 AND status IN ('queued', 'running', 'cancelling')
+     RETURNING *`,
+    [id, reason],
+  );
+  if (!res.rows[0]) return null;
+
+  await query(
+    `UPDATE job_steps
+     SET status = 'failed',
+         finished_at = COALESCE(finished_at, now()),
+         message = COALESCE(message, $2)
+     WHERE job_id = $1 AND status IN ('pending', 'running')`,
+    [id, reason],
+  );
+  await query(
+    `INSERT INTO job_logs (job_id, level, message) VALUES ($1, 'error', $2)`,
+    [id, reason],
+  );
+  return mapJob(res.rows[0]);
+}
+
 export async function setCloudRunExecution(
   id: string,
   executionName: string | null,
