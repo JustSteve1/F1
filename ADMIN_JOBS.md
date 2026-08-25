@@ -194,6 +194,17 @@ python3 worker/pipeline/seed_fastf1_cache.py \
 gcloud storage rsync --recursive ~/.cache/fastf1 gs://f1-data-library-fastf1-cache/fastf1
 ```
 
+### Resample checkpoint (same `JOB_ID`)
+
+Race sessions spend most of the hour resampling ~1M telemetry rows. If Cloud Run kills the task during **Upload telemetry**, that work is wasted unless it is on disk.
+
+After resample, the worker writes:
+
+- `gs://f1-data-library-fastf1-cache/staging/{job_id}/telemetry.parquet`
+- `gs://f1-data-library-fastf1-cache/staging/{job_id}/laps.parquet`
+
+A **restart of the same Cloud Run task / same `JOB_ID`** skips `extract_telemetry` and loads those Parquet files. Admin **Retry** clones a new UUID, so it will not reuse the old checkpoint (it will resample again). Failed jobs keep the prefix; a successful **Finalize** deletes it. Logs include `Wrote resample checkpoint`, `Using checkpoint from`, and `Deleted N checkpoint object(s)`.
+
 ### Rebuild / update the worker image
 
 ```bash

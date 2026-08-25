@@ -230,12 +230,19 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         if state.get("skip_all_existing"):
             db.append_log(job_id, "Skip resample — no new sessions")
             return
+        cached = pipe.load_resample_checkpoint(job_id, log=_cache_log)
+        if cached is not None:
+            state["telemetry_df"], state["laps_df"] = cached
+            return
         telemetry_df, laps_df = pipe.extract_telemetry(state["loaded"])
         state["telemetry_df"] = telemetry_df
         state["laps_df"] = laps_df
         db.append_log(
             job_id,
             f"Extracted {len(telemetry_df):,} telemetry rows, {len(laps_df):,} laps",
+        )
+        pipe.write_resample_checkpoint(
+            job_id, telemetry_df, laps_df, log=_cache_log
         )
 
     def upload_sessions():
@@ -252,9 +259,18 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         if state.get("skip_all_existing"):
             db.append_log(job_id, "Skip telemetry upload — already present")
             return
+        telemetry_df = state.get("telemetry_df")
+        if telemetry_df is None or len(telemetry_df) == 0:
+            cached = pipe.load_resample_checkpoint(job_id, log=_cache_log)
+            if cached is None:
+                raise RuntimeError(
+                    "No telemetry dataframe and no resample checkpoint in GCS"
+                )
+            telemetry_df, state["laps_df"] = cached
+            state["telemetry_df"] = telemetry_df
         pipe.upload_telemetry(
             client,
-            state["telemetry_df"],
+            telemetry_df,
             state["loaded"],
             log=_cache_log,
             job_id=job_id,
@@ -314,6 +330,16 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         )
         kag.upload_to_kaggle(combined)
 
+    def finalize():
+        try:
+            pipe.delete_resample_checkpoint(job_id, log=_cache_log)
+        except Exception as ck_err:
+            db.append_log(
+                job_id,
+                f"Checkpoint cleanup failed (non-fatal): {ck_err}",
+                level="warn",
+            )
+
     plan: list[tuple[str, str, Callable[[], None]]] = [
         ("load_fastf1", "Load FastF1 sessions", load),
         ("resample_telemetry", "Resample telemetry", resample),
@@ -327,7 +353,7 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         plan.append(("laps_unified", "Update laps_unified", unified))
     if include_kaggle:
         plan.append(("kaggle_upload", "Kaggle upload", kaggle))
-    plan.append(("done", "Finalize", lambda: None))
+    plan.append(("done", "Finalize", finalize))
 
     pipeline_ok = True
     for step_key, label, fn in plan:

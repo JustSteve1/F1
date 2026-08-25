@@ -113,6 +113,83 @@ def _staging_parquet_uri(job_id: str | None, filename: str) -> str:
     return f"gs://{bucket}/staging/{jid}/{filename}"
 
 
+def _gcs_blob(uri: str):
+    from google.cloud import storage
+
+    parsed = urlparse(uri)
+    client = storage.Client()
+    return client.bucket(parsed.netloc).blob(parsed.path.lstrip("/")), client
+
+
+def write_resample_checkpoint(job_id: str, telemetry_df, laps_df, *, log=print) -> dict:
+    """Persist resampled frames so upload can resume after a Cloud Run kill."""
+    tel_uri = _staging_parquet_uri(job_id, "telemetry.parquet")
+    laps_uri = _staging_parquet_uri(job_id, "laps.parquet")
+    tmp = Path("/tmp") / f"ckpt-{job_id}"
+    tmp.mkdir(parents=True, exist_ok=True)
+    tel_path = tmp / "telemetry.parquet"
+    laps_path = tmp / "laps.parquet"
+    telemetry_df.to_parquet(tel_path, index=False)
+    (laps_df if laps_df is not None else pd.DataFrame()).to_parquet(
+        laps_path, index=False
+    )
+    tel_blob, _ = _gcs_blob(tel_uri)
+    laps_blob, _ = _gcs_blob(laps_uri)
+    tel_blob.upload_from_filename(str(tel_path))
+    laps_blob.upload_from_filename(str(laps_path))
+    log(
+        f"Wrote resample checkpoint {tel_uri} "
+        f"({len(telemetry_df):,} telemetry rows, {len(laps_df) if laps_df is not None else 0:,} laps)"
+    )
+    return {
+        "telemetry_uri": tel_uri,
+        "laps_uri": laps_uri,
+        "telemetry_rows": int(len(telemetry_df)),
+        "laps_rows": int(len(laps_df) if laps_df is not None else 0),
+    }
+
+
+def load_resample_checkpoint(job_id: str, *, log=print):
+    """Return (telemetry_df, laps_df) if a checkpoint exists, else None."""
+    tel_uri = _staging_parquet_uri(job_id, "telemetry.parquet")
+    laps_uri = _staging_parquet_uri(job_id, "laps.parquet")
+    tel_blob, _ = _gcs_blob(tel_uri)
+    if not tel_blob.exists():
+        return None
+    tmp = Path("/tmp") / f"ckpt-load-{job_id}"
+    tmp.mkdir(parents=True, exist_ok=True)
+    tel_path = tmp / "telemetry.parquet"
+    laps_path = tmp / "laps.parquet"
+    tel_blob.download_to_filename(str(tel_path))
+    telemetry_df = pd.read_parquet(tel_path)
+    laps_df = pd.DataFrame()
+    laps_blob, _ = _gcs_blob(laps_uri)
+    if laps_blob.exists():
+        laps_blob.download_to_filename(str(laps_path))
+        laps_df = pd.read_parquet(laps_path)
+    log(
+        f"Using checkpoint from {tel_uri} "
+        f"({len(telemetry_df):,} telemetry rows, {len(laps_df):,} laps)"
+    )
+    return telemetry_df, laps_df
+
+
+def delete_resample_checkpoint(job_id: str, *, log=print) -> int:
+    """Remove staging/{job_id}/ after a successful pipeline."""
+    marker = _staging_parquet_uri(job_id, "_")
+    parsed = urlparse(marker)
+    prefix = parsed.path.lstrip("/").rsplit("/", 1)[0] + "/"
+    from google.cloud import storage
+
+    client = storage.Client()
+    deleted = 0
+    for blob in client.list_blobs(parsed.netloc, prefix=prefix):
+        blob.delete()
+        deleted += 1
+    log(f"Deleted {deleted} checkpoint object(s) under gs://{parsed.netloc}/{prefix}")
+    return deleted
+
+
 def _coerce_df_for_table(client, table_ref: str, df: pd.DataFrame) -> pd.DataFrame:
     """Align pandas dtypes to an existing BigQuery table schema."""
     table = client.get_table(table_ref)

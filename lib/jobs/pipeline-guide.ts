@@ -72,9 +72,9 @@ export const PIPELINE_GUIDE: Record<StepKey, PipelineGuideStep> = {
     key: "resample_telemetry",
     label: "Resample telemetry",
     notebookCell: "Cell 3",
-    short: "Nearest-neighbor resample to 10 Hz (0.1 s).",
+    short: "Nearest-neighbor resample to 10 Hz (0.1 s), then checkpoint to GCS.",
     detail:
-      "For each lap, pick the closest FastF1 sample to every 0.1 s tick. Captures speed, throttle, brake, gear, RPM, DRS, XYZ, deceleration, and distance. Dedupes on season/session/driver/lap/lap_time_sec.",
+      "For each lap, pick the closest FastF1 sample to every 0.1 s tick. Captures speed, throttle, brake, gear, RPM, DRS, XYZ, deceleration, and distance. Dedupes on season/session/driver/lap/lap_time_sec. Writes Parquet to gs://f1-data-library-fastf1-cache/staging/{job_id}/ so a killed upload can skip this step on the same JOB_ID. Staging is deleted after a successful run.",
     writes: [],
     inputs: ["Per-lap FastF1 telemetry"],
     outputs: ["telemetry_df (10 Hz points)", "Thin laps_df metadata"],
@@ -120,7 +120,7 @@ export const PIPELINE_GUIDE: Record<StepKey, PipelineGuideStep> = {
     notebookCell: "Cell 5",
     short: "Bulk-load 10 Hz points into telemetry.",
     detail:
-      "Adds session_key/meeting_key and import timestamps, deletes any existing telemetry for those session_keys, then appends via a BigQuery load job (load_table_from_dataframe). On type failure, writes Parquet to gs://f1-data-library-fastf1-cache/staging/{job_id}/ and loads from URI. Job id and row count are logged to Postgres.",
+      "Adds session_key/meeting_key and import timestamps, deletes any existing telemetry for those session_keys, then appends via a BigQuery load job (load_table_from_dataframe). Reads the in-memory frame or, if missing, the GCS resample checkpoint. On type failure, writes Parquet to gs://f1-data-library-fastf1-cache/staging/{job_id}/ and loads from URI. Job id and row count are logged to Postgres.",
     writes: ["telemetry"],
     inputs: ["Resampled telemetry_df"],
     outputs: ["telemetry rows in BigQuery"],
