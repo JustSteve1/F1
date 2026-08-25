@@ -443,7 +443,14 @@ function CacheBanner({
         <code className="text-[11px] text-amber-100">
           roles/storage.objectViewer
         </code>{" "}
-        on the cache bucket to the trigger SA, then refresh.
+        on the cache bucket to the trigger SA, then refresh. Seed from a
+        home/Mac IP with{" "}
+        <code className="text-[11px] text-amber-100">
+          gcloud storage rsync --recursive ~/.cache/fastf1
+          gs://f1-data-library-fastf1-cache/fastf1
+        </code>
+        . Do not use <code className="text-[11px]">gsutil -m rsync</code> on
+        macOS (sys.maxint).
       </p>
     );
   }
