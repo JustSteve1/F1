@@ -17,12 +17,13 @@ Requirements:
 
 import argparse
 import hashlib
-import json
 import logging
 import os
 import sys
 import warnings
 from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlparse
 
 import fastf1
 import numpy as np
@@ -89,6 +90,7 @@ def safe_str(val):
 
 
 def upload_in_batches(client, table_ref, rows, batch_size=1000, label="rows"):
+    """Streaming insert for small tables (sessions). Do not use for telemetry."""
     total = len(rows)
     uploaded = 0
     for i in range(0, total, batch_size):
@@ -100,6 +102,122 @@ def upload_in_batches(client, table_ref, rows, batch_size=1000, label="rows"):
         if total > batch_size and uploaded % 10_000 == 0:
             print(f"  {uploaded:,} / {total:,} {label} uploaded…")
     return uploaded
+
+
+def _staging_parquet_uri(job_id: str | None, filename: str) -> str:
+    cache_uri = os.environ.get("FASTF1_CACHE_GCS_URI", "").strip()
+    bucket = "f1-data-library-fastf1-cache"
+    if cache_uri.startswith("gs://"):
+        bucket = urlparse(cache_uri).netloc or bucket
+    jid = job_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"gs://{bucket}/staging/{jid}/{filename}"
+
+
+def _coerce_df_for_table(client, table_ref: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Align pandas dtypes to an existing BigQuery table schema."""
+    table = client.get_table(table_ref)
+    out = pd.DataFrame(index=df.index)
+    for field in table.schema:
+        if field.name not in df.columns:
+            continue
+        col = df[field.name]
+        ftype = (field.field_type or "").upper()
+        if ftype in ("INTEGER", "INT64"):
+            out[field.name] = pd.to_numeric(col, errors="coerce").astype("Int64")
+        elif ftype in ("FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC"):
+            out[field.name] = pd.to_numeric(col, errors="coerce")
+        elif ftype in ("BOOLEAN", "BOOL"):
+            out[field.name] = col.map(
+                lambda v: None
+                if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v)
+                else bool(v)
+            ).astype("boolean")
+        elif ftype in ("TIMESTAMP", "DATETIME"):
+            out[field.name] = pd.to_datetime(col, utc=True, errors="coerce")
+        elif ftype == "DATE":
+            ts = pd.to_datetime(col, utc=True, errors="coerce")
+            out[field.name] = ts.dt.date
+        else:
+            out[field.name] = col.map(
+                lambda v: None
+                if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v)
+                else str(v)
+            )
+    return out
+
+
+def load_dataframe(
+    client,
+    table_ref: str,
+    df: pd.DataFrame,
+    *,
+    log=print,
+    job_id: str | None = None,
+    label: str = "rows",
+) -> dict:
+    """Bulk-append a DataFrame via a BigQuery load job (not streaming insert).
+
+    Tries load_table_from_dataframe first. On schema/type failure, writes Parquet
+    to gs://<cache-bucket>/staging/{job_id}/ and loads from URI.
+    """
+    if df is None or len(df) == 0:
+        log(f"No {label} to load")
+        return {"rows": 0, "bq_job_id": None, "method": "skip"}
+
+    coerced = _coerce_df_for_table(client, table_ref, df)
+    table = client.get_table(table_ref)
+    job_config = bigquery.LoadJobConfig(
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        schema=table.schema,
+    )
+    try:
+        load_job = client.load_table_from_dataframe(
+            coerced, table_ref, job_config=job_config
+        )
+        load_job.result()
+        log(
+            f"BigQuery load job {load_job.job_id}: "
+            f"{len(coerced):,} {label} → {table_ref} (dataframe)"
+        )
+        return {
+            "rows": len(coerced),
+            "bq_job_id": load_job.job_id,
+            "method": "dataframe",
+        }
+    except Exception as exc:
+        log(
+            f"load_table_from_dataframe failed ({exc}); "
+            "falling back to Parquet GCS load"
+        )
+
+    uri = _staging_parquet_uri(job_id, f"{label.replace(' ', '_')}.parquet")
+    parsed = urlparse(uri)
+    local_path = Path("/tmp") / parsed.path.lstrip("/").replace("/", "_")
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    coerced.to_parquet(local_path, index=False)
+
+    from google.cloud import storage
+
+    storage.Client().bucket(parsed.netloc).blob(
+        parsed.path.lstrip("/")
+    ).upload_from_filename(str(local_path))
+    parquet_config = bigquery.LoadJobConfig(
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        source_format=bigquery.SourceFormat.PARQUET,
+        schema=table.schema,
+    )
+    load_job = client.load_table_from_uri(uri, table_ref, job_config=parquet_config)
+    load_job.result()
+    log(
+        f"BigQuery load job {load_job.job_id}: "
+        f"{len(coerced):,} {label} → {table_ref} (parquet {uri})"
+    )
+    return {
+        "rows": len(coerced),
+        "bq_job_id": load_job.job_id,
+        "method": "parquet",
+        "uri": uri,
+    }
 
 
 # ── Step 1: Check existing data ───────────────────────────────────────────────
@@ -446,10 +564,10 @@ def extract_telemetry(loaded_sessions):
 
 # ── Step 4: Upload sessions + laps ───────────────────────────────────────────
 
-def upload_sessions_and_laps(client, loaded_sessions, laps_df, race):
+def upload_sessions_and_laps(client, loaded_sessions, laps_df, race, *, log=print, job_id=None):
     now = datetime.now(timezone.utc).isoformat()
 
-    # Sessions
+    # Sessions — small; streaming insert is fine
     sessions_rows = []
     for (year, stype), session in loaded_sessions.items():
         sk = generate_session_key(year, session.event["EventName"], stype)
@@ -471,9 +589,9 @@ def upload_sessions_and_laps(client, loaded_sessions, laps_df, race):
 
     errors = client.insert_rows_json(f"{PROJECT}.{DATASET}.sessions", sessions_rows)
     if errors:
-        print(f"  ⚠  Session upload errors: {errors[:2]}")
+        log(f"Session upload errors: {errors[:2]}")
     else:
-        print(f"  ✅  {len(sessions_rows)} session(s) uploaded")
+        log(f"{len(sessions_rows)} session(s) uploaded")
 
     # Laps — full schema (Cell 7 style)
     laps_full = []
@@ -533,21 +651,23 @@ def upload_sessions_and_laps(client, loaded_sessions, laps_df, race):
             })
 
     if laps_full:
-        uploaded = upload_in_batches(
+        result = load_dataframe(
             client,
             f"{PROJECT}.{DATASET}.laps",
-            laps_full,
-            batch_size=500,
+            pd.DataFrame(laps_full),
+            log=log,
+            job_id=job_id,
             label="laps",
         )
-        print(f"  ✅  {uploaded:,} laps uploaded")
-    else:
-        print("  ⏭  No new laps to upload")
+        log(f"{result['rows']:,} laps uploaded")
+        return result
+    log("No new laps to upload")
+    return {"rows": 0, "bq_job_id": None, "method": "skip"}
 
 
 # ── Step 5: Upload telemetry ──────────────────────────────────────────────────
 
-def upload_telemetry(client, telemetry_df, loaded_sessions):
+def upload_telemetry(client, telemetry_df, loaded_sessions, *, log=print, job_id=None):
     now = datetime.now(timezone.utc).isoformat()
     telemetry_df = telemetry_df.copy()
     telemetry_df["imported_at"] = now
@@ -567,12 +687,16 @@ def upload_telemetry(client, telemetry_df, loaded_sessions):
         "date", "imported_at",
     ]
     upload_df = telemetry_df[[c for c in cols if c in telemetry_df.columns]].copy()
-    upload_df = upload_df.where(pd.notnull(upload_df), None)
-    # to_dict("records") leaves NaN floats that break insert_rows_json; use JSON round-trip
-    rows = json.loads(upload_df.to_json(orient="records", date_format="iso"))
-
-    uploaded = upload_in_batches(client, f"{PROJECT}.{DATASET}.telemetry", rows, label="telemetry points")
-    print(f"  ✅  {uploaded:,} telemetry points uploaded")
+    result = load_dataframe(
+        client,
+        f"{PROJECT}.{DATASET}.telemetry",
+        upload_df,
+        log=log,
+        job_id=job_id,
+        label="telemetry points",
+    )
+    log(f"{result['rows']:,} telemetry points uploaded")
+    return result
 
 
 # ── Step 6: Verify upload ─────────────────────────────────────────────────────

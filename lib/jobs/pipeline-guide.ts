@@ -103,9 +103,9 @@ export const PIPELINE_GUIDE: Record<StepKey, PipelineGuideStep> = {
     key: "upload_sessions_laps",
     label: "Upload sessions & laps",
     notebookCell: "Cell 4",
-    short: "Insert session and lap rows into BigQuery.",
+    short: "Insert session rows; bulk-load laps.",
     detail:
-      "session_key is derived from MD5(year-race-session) truncated to 8 hex digits. Sessions and lap metadata (sectors, compound, tyre age, stint) are inserted first so telemetry can join on session_key.",
+      "session_key is derived from MD5(year-race-session) truncated to 8 hex digits. Sessions are inserted with insert_rows_json (tiny). Laps are appended via a BigQuery load job (load_table_from_dataframe, Parquet/GCS fallback).",
     writes: ["sessions", "laps"],
     inputs: ["Loaded sessions", "laps_df"],
     outputs: ["sessions rows", "laps rows", "session_key"],
@@ -118,9 +118,9 @@ export const PIPELINE_GUIDE: Record<StepKey, PipelineGuideStep> = {
     key: "upload_telemetry",
     label: "Upload telemetry",
     notebookCell: "Cell 5",
-    short: "Batch-insert 10 Hz points into telemetry.",
+    short: "Bulk-load 10 Hz points into telemetry.",
     detail:
-      "Adds session_key/meeting_key and import timestamps, coerces NaN to null, and uploads in ~1000-row batches via insert_rows_json into f1_data_library_DS.telemetry.",
+      "Adds session_key/meeting_key and import timestamps, aligns dtypes to the existing table schema, and appends via a BigQuery load job (load_table_from_dataframe). On type failure, writes Parquet to gs://f1-data-library-fastf1-cache/staging/{job_id}/ and loads from URI. Job id and row count are logged to Postgres.",
     writes: ["telemetry"],
     inputs: ["Resampled telemetry_df"],
     outputs: ["telemetry rows in BigQuery"],

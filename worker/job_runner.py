@@ -243,14 +243,22 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
             db.append_log(job_id, "Skip sessions/laps upload — already present")
             return
         pipe.upload_sessions_and_laps(
-            client, state["loaded"], state["laps_df"], race
+            client, state["loaded"], state["laps_df"], race,
+            log=_cache_log,
+            job_id=job_id,
         )
 
     def upload_telemetry():
         if state.get("skip_all_existing"):
             db.append_log(job_id, "Skip telemetry upload — already present")
             return
-        pipe.upload_telemetry(client, state["telemetry_df"], state["loaded"])
+        pipe.upload_telemetry(
+            client,
+            state["telemetry_df"],
+            state["loaded"],
+            log=_cache_log,
+            job_id=job_id,
+        )
 
     def verify():
         pipe.verify_upload(client, years, race, session_types)
