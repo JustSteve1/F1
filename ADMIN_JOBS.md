@@ -214,6 +214,22 @@ A **restart of the same Cloud Run task / same `JOB_ID`** skips `extract_telemetr
 
 ### Rebuild / update the worker image
 
+Lesson 5: rebuild `f1-telemetry-import` from this branch and pin FastF1 on the **job** (not only the per-execution override). Live image still defaults to OpenF1 until this runs.
+
+```bash
+# From repo root on MVP2 (or main after merge)
+./scripts/gcp/rebuild-worker.sh
+```
+
+That script:
+
+1. `gcloud builds submit worker` → `europe-west1-docker.pkg.dev/f1-data-library/cloud-run-source-deploy/f1-telemetry-import:v1`
+2. `gcloud run jobs update` with `--update-env-vars=INGEST_SOURCE=fastf1`
+3. Removes `WORKER_DRY_RUN` if set
+4. Verifies the job container env
+
+Manual equivalent:
+
 ```bash
 export PROJECT=f1-data-library
 export REGION=europe-west1
@@ -228,8 +244,12 @@ gcloud run jobs update $JOB \
   --service-account=interval-jobs-worker@$PROJECT.iam.gserviceaccount.com \
   --set-cloudsql-instances=$PROJECT:$REGION:interval-jobs \
   --max-retries=0 --task-timeout=3600 --memory=4Gi --cpu=2 \
-  --update-env-vars=FASTF1_CACHE_GCS_URI=gs://f1-data-library-fastf1-cache/fastf1,FASTF1_CACHE_DIR=/tmp/fastf1-cache
+  --update-env-vars=INGEST_SOURCE=fastf1,FASTF1_CACHE_GCS_URI=gs://f1-data-library-fastf1-cache/fastf1,FASTF1_CACHE_DIR=/tmp/fastf1-cache
 ```
+
+The Jobs Admin header shows a **Stub** badge when `JOB_WORKER_MODE=stub` (no BigQuery writes). Preview and Production must show **Cloud Run · FastF1**.
+
+`--task-timeout` stays 3600 until lesson 7.
 
 Clear dry-run when ready for real imports:
 
@@ -255,6 +275,7 @@ gcloud run jobs update f1-telemetry-import \
 | `POST /api/admin/import/load` | Load-focused create + trigger (FastF1 → BQ) |
 | `GET /api/admin/import/status` | BQ presence + row counts for a race |
 | `GET /api/admin/import/cache` | FastF1 GCS cache folders for a year/race |
+| `GET /api/admin/worker` | Worker mode (`stub` / `local` / `cloud_run`) + ingest source |
 
 ## Session Load API
 
@@ -471,6 +492,7 @@ Also authorize Vercel egress (see connectivity) before Preview or Production can
 - [ ] `DATABASE_URL` with `sslmode=require` on both
 - [ ] `GCP_PROJECT_ID` / `CLOUD_RUN_JOB_NAME` set on both
 - [ ] Creating a job logs `Triggered Cloud Run Job execution` (not stub)
+- [ ] Header badge is **Cloud Run · FastF1**, not **Stub**
 
 ## First real job (Monaco)
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { JobDetail } from "@/components/admin/jobs/JobDetail";
 import { JobList } from "@/components/admin/jobs/JobList";
+import { WorkerModeBadge } from "@/components/admin/jobs/WorkerModeBadge";
 import type { JobDetail as JobDetailType, JobRow } from "@/lib/jobs/types";
 
 export default function AdminJobDetailPage() {
@@ -83,6 +84,7 @@ export default function AdminJobDetailPage() {
             </p>
           </div>
           <div className="flex items-center gap-4 text-xs">
+            <WorkerModeBadge />
             <Link
               href="/admin/pipeline"
               className="text-white/50 hover:text-white transition-colors"

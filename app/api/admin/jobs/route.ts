@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createJob, listJobs, parseJobParams } from "@/lib/jobs/queries";
 import { triggerWorker } from "@/lib/jobs/cloud-run";
 import { validateJobParamsAgainstCatalog } from "@/lib/jobs/import-catalog";
+import { getWorkerInfo } from "@/lib/jobs/worker-info";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,10 +10,13 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const jobs = await listJobs(100);
-    return NextResponse.json({ jobs });
+    return NextResponse.json({ jobs, worker: getWorkerInfo() });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to list jobs";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: message, worker: getWorkerInfo() },
+      { status: 500 },
+    );
   }
 }
 

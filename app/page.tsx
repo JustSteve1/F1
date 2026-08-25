@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CreateJobForm } from "@/components/admin/jobs/CreateJobForm";
 import { JobList } from "@/components/admin/jobs/JobList";
+import { WorkerModeBadge } from "@/components/admin/jobs/WorkerModeBadge";
 import type { JobRow } from "@/lib/jobs/types";
 
 export default function Home() {
@@ -49,6 +50,7 @@ export default function Home() {
             </p>
           </div>
           <div className="flex items-center gap-4 text-xs">
+            <WorkerModeBadge />
             <Link
               href="/admin"
               className="text-white/50 hover:text-white transition-colors"

@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PipelineFlow } from "@/components/admin/pipeline/PipelineFlow";
+import { StubModeBanner } from "@/components/admin/jobs/WorkerModeBadge";
 import type { Fastf1CacheStatus } from "@/lib/jobs/fastf1-cache-types";
+import type { WorkerInfo } from "@/lib/jobs/worker-info";
 import type { SessionType } from "@/lib/jobs/steps";
 import type { CatalogEvent, ImportCatalog } from "@/lib/jobs/session-map";
 
@@ -26,6 +28,7 @@ export function CreateJobForm({ onCreated }: Props) {
   const [error, setError] = useState("");
   const [cache, setCache] = useState<Fastf1CacheStatus | null>(null);
   const [cacheLoading, setCacheLoading] = useState(false);
+  const [stub, setStub] = useState(false);
 
   const primaryYear = useMemo(() => {
     const first = years
@@ -108,6 +111,22 @@ export function CreateJobForm({ onCreated }: Props) {
     })();
     return () => ac.abort();
   }, [primaryYear, race]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/worker", { cache: "no-store" });
+        const data = (await res.json()) as WorkerInfo;
+        if (!cancelled && res.ok) setStub(!!data.stub);
+      } catch {
+        if (!cancelled) setStub(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const eventSessionKey = selectedEvent
     ? `${selectedEvent.eventName}:${selectedEvent.sessions.map((s) => s.code).join(",")}`
@@ -205,6 +224,8 @@ export function CreateJobForm({ onCreated }: Props) {
           cache; livetiming will not work from a datacenter IP.
         </p>
       </div>
+
+      <StubModeBanner />
 
       <div className="grid gap-4 md:grid-cols-2">
         <label className="block space-y-1.5">
@@ -376,7 +397,7 @@ export function CreateJobForm({ onCreated }: Props) {
         disabled={!canSubmit}
         className="inline-flex items-center justify-center bg-[#2596be] px-5 py-2.5 text-xs font-bold uppercase tracking-widest text-white transition hover:brightness-110 disabled:opacity-50"
       >
-        {submitting ? "Creating…" : "Create & run"}
+        {submitting ? "Creating…" : stub ? "Create stub run" : "Create & run"}
       </button>
     </form>
   );
