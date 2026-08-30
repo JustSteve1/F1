@@ -399,7 +399,14 @@ FastF1 event name: **`Dutch Grand Prix`**. Sprint-format sessions: **`FP1`, `SQ`
 ./scripts/gcp/dedup-dutch-r-laps.sh --apply
 ```
 
-`after.laps_rows` should equal `after.unique_driver_laps`. Then one load with `noSkip: true`. Do not load `R` while extras remain.
+`after.laps_rows` should equal `after.unique_driver_laps`. Two failed jobs also left **2** `sessions` rows for the same key — collapse to one:
+
+```bash
+bq query --project_id=f1-data-library --use_legacy_sql=false --nouse_cache \
+  < sql/dedup_dutch_2026_r_sessions.sql
+```
+
+Then one load with `noSkip: true`. Do not load `R` while lap extras remain.
 
 **End-to-end load (after Mac seed → GCS):**
 
