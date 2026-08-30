@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createJob, listJobs, parseJobParams } from "@/lib/jobs/queries";
 import { triggerWorker } from "@/lib/jobs/cloud-run";
 import { validateJobParamsAgainstCatalog } from "@/lib/jobs/import-catalog";
+import { reconcileActiveJobs } from "@/lib/jobs/reconcile";
 import { getWorkerInfo } from "@/lib/jobs/worker-info";
 
 export const runtime = "nodejs";
@@ -9,7 +10,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const jobs = await listJobs(100);
+    let jobs = await listJobs(100);
+    if (await reconcileActiveJobs(jobs)) {
+      jobs = await listJobs(100);
+    }
     return NextResponse.json({ jobs, worker: getWorkerInfo() });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to list jobs";

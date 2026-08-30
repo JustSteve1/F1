@@ -85,6 +85,19 @@ def update_job(
         )
 
 
+def heartbeat(job_id: str) -> None:
+    """Touch updated_at so the admin UI/watchdog knows the worker is alive."""
+    with cursor() as cur:
+        cur.execute(
+            """
+            UPDATE jobs
+            SET updated_at = now()
+            WHERE id = %s AND status IN ('queued', 'running', 'cancelling')
+            """,
+            (job_id,),
+        )
+
+
 def begin_step(job_id: str, step_key: str, message: str) -> None:
     with cursor() as cur:
         cur.execute(

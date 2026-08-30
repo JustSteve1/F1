@@ -243,13 +243,21 @@ gcloud run jobs update $JOB \
   --image=$IMAGE \
   --service-account=interval-jobs-worker@$PROJECT.iam.gserviceaccount.com \
   --set-cloudsql-instances=$PROJECT:$REGION:interval-jobs \
-  --max-retries=0 --task-timeout=3600 --memory=4Gi --cpu=2 \
+  --max-retries=0 --task-timeout=14400 --memory=4Gi --cpu=2 \
   --update-env-vars=INGEST_SOURCE=fastf1,FASTF1_CACHE_GCS_URI=gs://f1-data-library-fastf1-cache/fastf1,FASTF1_CACHE_DIR=/tmp/fastf1-cache
 ```
 
 The Jobs Admin header shows a **Stub** badge when `JOB_WORKER_MODE=stub` (no BigQuery writes). Preview and Production must show **Cloud Run · FastF1**.
 
-`--task-timeout` stays 3600 until lesson 7.
+`--task-timeout` is **14400** (4 hours) so a Dutch `R` resample + bulk load can finish. The worker also heartbeats every 30s and caps each step (resample 90 min, telemetry upload 45 min). Opening a running job (or the jobs list) maps a dead Cloud Run execution to Postgres `failed`.
+
+Raise timeout on the live job without a full rebuild:
+
+```bash
+gcloud run jobs update f1-telemetry-import \
+  --project=f1-data-library --region=europe-west1 \
+  --task-timeout=14400
+```
 
 Clear dry-run when ready for real imports:
 

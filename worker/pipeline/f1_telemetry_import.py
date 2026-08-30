@@ -617,7 +617,7 @@ def resample_lap_telemetry(lap, interval_sec=TELEMETRY_INTERVAL):
         return []
 
 
-def extract_telemetry(loaded_sessions):
+def extract_telemetry(loaded_sessions, log=print):
     all_telemetry = []
     all_laps = []
     _TELEM_LOAD_STATS["get_telemetry_ok"] = 0
@@ -628,7 +628,7 @@ def extract_telemetry(loaded_sessions):
     for (year, stype), session in loaded_sessions.items():
         event_name = session.event["EventName"]
         circuit = session.event.get("Location", "")
-        print(f"  Extracting {year} {stype} ({len(session.laps)} laps)…")
+        log(f"  Extracting {year} {stype} ({len(session.laps)} laps)…")
         laps_with_points = 0
 
         for _, lap in session.laps.iterrows():
@@ -654,7 +654,7 @@ def extract_telemetry(loaded_sessions):
                 "sector_2": timedelta_to_seconds(lap.get("Sector2Time")),
                 "sector_3": timedelta_to_seconds(lap.get("Sector3Time")),
             })
-        print(
+        log(
             f"     telem coverage: {laps_with_points}/{len(session.laps)} laps "
             f"(get_telemetry={_TELEM_LOAD_STATS['get_telemetry_ok']}, "
             f"car_fallback={_TELEM_LOAD_STATS['car_data_fallback_ok']}, "
@@ -665,7 +665,7 @@ def extract_telemetry(loaded_sessions):
         subset=["season", "session_type", "driver_number", "lap_number", "lap_time_sec"]
     )
     laps_df = pd.DataFrame(all_laps)
-    print(f"  ✅  {len(telemetry_df):,} telemetry points, {len(laps_df):,} laps extracted")
+    log(f"  ✅  {len(telemetry_df):,} telemetry points, {len(laps_df):,} laps extracted")
     return telemetry_df, laps_df
 
 

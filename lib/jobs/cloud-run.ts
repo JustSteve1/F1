@@ -58,6 +58,56 @@ export function getGoogleAuth(): GoogleAuth {
   return new GoogleAuth({ scopes });
 }
 
+async function getAccessToken(): Promise<string> {
+  const auth = getGoogleAuth();
+  const client = await auth.getClient();
+  const token = await client.getAccessToken();
+  if (!token.token) {
+    throw new Error("Failed to obtain GCP access token");
+  }
+  return token.token;
+}
+
+export type CloudRunExecutionInfo = {
+  name: string;
+  completionStatus: string | null;
+  reconciling: boolean;
+};
+
+export async function getCloudRunExecution(
+  executionName: string,
+): Promise<CloudRunExecutionInfo | null> {
+  if (
+    !executionName ||
+    executionName.startsWith("stub://") ||
+    executionName.startsWith("local://")
+  ) {
+    return null;
+  }
+  const token = await getAccessToken();
+  const url = `https://run.googleapis.com/v2/${executionName}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Cloud Run execution get failed (${res.status}): ${text.slice(0, 300)}`,
+    );
+  }
+  const data = (await res.json()) as {
+    name?: string;
+    reconciling?: boolean;
+    completionStatus?: string;
+  };
+  return {
+    name: data.name || executionName,
+    completionStatus: data.completionStatus ?? null,
+    reconciling: Boolean(data.reconciling),
+  };
+}
+
 /**
  * Trigger the Cloud Run Job execution for a queued job.
  * Uses JSON key env vars (Vercel) or ADC / key file (local).
@@ -72,12 +122,7 @@ export async function triggerCloudRunJob(jobId: string): Promise<string> {
     throw new Error("GCP_PROJECT_ID is required for cloud_run worker mode");
   }
 
-  const auth = getGoogleAuth();
-  const client = await auth.getClient();
-  const token = await client.getAccessToken();
-  if (!token.token) {
-    throw new Error("Failed to obtain GCP access token for Cloud Run Jobs");
-  }
+  const token = await getAccessToken();
 
   const parent = `projects/${project}/locations/${region}/jobs/${jobName}`;
   const url = `https://run.googleapis.com/v2/${parent}:run`;
@@ -85,7 +130,7 @@ export async function triggerCloudRunJob(jobId: string): Promise<string> {
   const res = await fetch(url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token.token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -94,8 +139,6 @@ export async function triggerCloudRunJob(jobId: string): Promise<string> {
           {
             env: [
               { name: "JOB_ID", value: jobId },
-              // Pin FastF1 until the Cloud Run job image default is rebuilt
-              // (lesson 5). Live image still defaults to openf1.
               { name: "INGEST_SOURCE", value: ingestSource },
             ],
           },

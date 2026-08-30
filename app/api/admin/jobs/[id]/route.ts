@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getJobDetail } from "@/lib/jobs/queries";
+import { reconcileJobExecution } from "@/lib/jobs/reconcile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,9 +10,15 @@ type Params = { params: Promise<{ id: string }> };
 export async function GET(_request: Request, { params }: Params) {
   try {
     const { id } = await params;
-    const job = await getJobDetail(id);
+    let job = await getJobDetail(id);
     if (!job) {
       return NextResponse.json({ error: "Job not found" }, { status: 404 });
+    }
+    if (await reconcileJobExecution(job)) {
+      job = await getJobDetail(id);
+      if (!job) {
+        return NextResponse.json({ error: "Job not found" }, { status: 404 });
+      }
     }
     return NextResponse.json({ job });
   } catch (err) {

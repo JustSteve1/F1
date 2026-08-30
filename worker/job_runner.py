@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+import time
 import traceback
 from pathlib import Path
 from typing import Any, Callable
@@ -29,6 +31,20 @@ STEP_ORDER = [
     "kaggle_upload",
     "done",
 ]
+
+# Per-step wall-clock caps (seconds). Cloud Run --task-timeout is 14400 (4h).
+STEP_TIMEOUTS_SEC: dict[str, int] = {
+    "load_fastf1": 20 * 60,
+    "resample_telemetry": 90 * 60,
+    "upload_sessions_laps": 15 * 60,
+    "upload_telemetry": 45 * 60,
+    "verify": 10 * 60,
+    "quality_checks": 20 * 60,
+    "laps_unified": 15 * 60,
+    "kaggle_upload": 20 * 60,
+    "done": 5 * 60,
+}
+HEARTBEAT_SEC = 30
 
 
 def _params(job: dict[str, Any]) -> dict[str, Any]:
@@ -81,9 +97,36 @@ def _run_step(
         status_message=f"Running: {label}",
     )
     db.append_log(job_id, f"▶ {label}")
+    db.heartbeat(job_id)
+
+    timeout = STEP_TIMEOUTS_SEC.get(step_key, 30 * 60)
+    done = threading.Event()
+    box: list[BaseException] = []
+
+    def runner() -> None:
+        try:
+            fn()
+        except BaseException as exc:  # noqa: BLE001 — propagate to waiter
+            box.append(exc)
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=runner, name=f"step-{step_key}", daemon=True)
+    thread.start()
+    deadline = time.monotonic() + timeout
 
     try:
-        fn()
+        while not done.wait(timeout=HEARTBEAT_SEC):
+            db.heartbeat(job_id)
+            if db.is_cancelling(job_id):
+                db.finish_step(job_id, step_key, "cancelled", "Cancelled")
+                return False
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"{label} exceeded {timeout // 60} min step cap"
+                )
+        if box:
+            raise box[0]
         if db.is_cancelling(job_id):
             db.finish_step(job_id, step_key, "cancelled", "Cancelled")
             return False
@@ -235,7 +278,9 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         if cached is not None:
             state["telemetry_df"], state["laps_df"] = cached
             return
-        telemetry_df, laps_df = pipe.extract_telemetry(state["loaded"])
+        telemetry_df, laps_df = pipe.extract_telemetry(
+            state["loaded"], log=_cache_log
+        )
         state["telemetry_df"] = telemetry_df
         state["laps_df"] = laps_df
         db.append_log(
