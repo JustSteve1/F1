@@ -387,7 +387,21 @@ GET /api/admin/import/cache?year=2026&race=Dutch%20Grand%20Prix&sessions=FP1,R
 
 ### Dutch Grand Prix 2026 (sprint weekend)
 
-FastF1 event name: **`Dutch Grand Prix`**. Sprint-format sessions: **`FP1`, `SQ`, `S`, `Q`, `R`** (no FP2/FP3).
+FastF1 event name: **`Dutch Grand Prix`**. Sprint-format sessions: **`FP1`, `SQ`, `S`, `Q`, `R`** (no FP2/FP3). Dutch race `session_key` is **`2456128946`**.
+
+**Dedup laps before loading `R`.** Two failed race jobs appended laps (expected ~1,368 unique driver/laps; warehouse had 2–3×). Telemetry for `R` never landed. From a machine with `gcloud` / `bq` (Steves-Air):
+
+```bash
+# Preview (no writes)
+./scripts/gcp/dedup-dutch-r-laps.sh
+
+# Apply — extra_copies must drop to 0
+./scripts/gcp/dedup-dutch-r-laps.sh --apply
+```
+
+`after.laps_rows` should equal `after.unique_driver_laps`. Then one load with `noSkip: true`. Do not load `R` while extras remain.
+
+**End-to-end load (after Mac seed → GCS):**
 
 **End-to-end load (after Mac seed → GCS):**
 
