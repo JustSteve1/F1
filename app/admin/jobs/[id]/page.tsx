@@ -55,6 +55,26 @@ export default function AdminJobDetailPage() {
     }
   }
 
+  async function handleFail() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/jobs/${id}/fail`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: "Force-failed from admin UI",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Force fail failed");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Force fail failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleRetry() {
     setBusy(true);
     try {
@@ -123,9 +143,11 @@ export default function AdminJobDetailPage() {
               </div>
             ) : (
               <JobDetail
+                key={job.id}
                 job={job}
                 onCancel={handleCancel}
                 onRetry={handleRetry}
+                onFail={handleFail}
                 busy={busy}
               />
             )}

@@ -17,7 +17,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ## Jobs Admin (telemetry pipeline)
 
-Private admin to run FastF1 → BigQuery → Kaggle import jobs with live progress.
+Private admin to run FastF1 → BigQuery → Kaggle import jobs with live progress, worker heartbeat, Cancel (stops Cloud Run), and Force fail.
 
 - UI: [`/admin/jobs`](http://localhost:3000/admin/jobs)
 - Setup, Postgres, Cloud Run Jobs, and Vercel: **[ADMIN_JOBS.md](./ADMIN_JOBS.md)**

@@ -1,6 +1,6 @@
 # Jobs Admin v1 — Interval.ai telemetry pipeline
 
-Private admin UI to **create / cancel / retry** FastF1 → BigQuery → Kaggle import jobs, with live step progress and failure logs.
+Private admin UI to **create / cancel / retry / force-fail** FastF1 → BigQuery → Kaggle import jobs, with live step progress, worker heartbeat, and failure logs.
 
 ## One trunk
 
@@ -251,6 +251,8 @@ The Jobs Admin header shows a **Stub** badge when `JOB_WORKER_MODE=stub` (no Big
 
 `--task-timeout` is **14400** (4 hours) so a Dutch `R` resample + bulk load can finish. The worker also heartbeats every 30s and caps each step (resample 90 min, telemetry upload 45 min). Opening a running job (or the jobs list) maps a dead Cloud Run execution to Postgres `failed`.
 
+Jobs Admin shows that heartbeat (live / lagging / silent) plus step elapsed time. **Cancel** sets Postgres `cancelling` **and** calls Cloud Run `executions:cancel` so the container gets SIGTERM (it no longer waits for the next step boundary). **Force fail** marks the row `failed` and also cancels the execution — use it for zombies. Cloud Run `CANCELLED` reconciles to Postgres `cancelled`, not `failed`.
+
 Raise timeout on the live job without a full rebuild:
 
 ```bash
@@ -273,12 +275,12 @@ gcloud run jobs update f1-telemetry-import \
 | Path | Purpose |
 |------|---------|
 | `/admin/jobs` | Create job + live list |
-| `/admin/jobs/[id]` | Detail: step timeline, %, scrolling logs, cancel/retry |
+| `/admin/jobs/[id]` | Detail: step timeline, %, heartbeat, scrolling logs, cancel / force-fail / retry |
 | `POST /api/admin/jobs` | Create + trigger worker |
 | `GET /api/admin/jobs` | List |
 | `GET /api/admin/jobs/[id]` | Detail (+ steps + recent logs) |
-| `POST /api/admin/jobs/[id]/cancel` | Set `cancelling` (worker stops between steps) |
-| `POST /api/admin/jobs/[id]/fail` | Force-fail `queued` / `running` / `cancelling` (zombies) |
+| `POST /api/admin/jobs/[id]/cancel` | Set `cancelling` **and** cancel the Cloud Run execution |
+| `POST /api/admin/jobs/[id]/fail` | Force-fail `queued` / `running` / `cancelling` and cancel Cloud Run |
 | `POST /api/admin/jobs/[id]/retry` | Clone params → new job + trigger |
 | `POST /api/admin/import/load` | Load-focused create + trigger (FastF1 → BQ) |
 | `GET /api/admin/import/status` | BQ presence + row counts for a race |

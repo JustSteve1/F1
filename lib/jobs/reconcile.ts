@@ -1,8 +1,10 @@
+import { HEARTBEAT_STALE_MS } from "./heartbeat";
 import { getCloudRunExecution } from "./cloud-run";
-import { forceFailJob } from "./queries";
+import { finalizeCancel, forceFailJob } from "./queries";
+import { mapCloudRunCompletion } from "./reconcile-map";
 import type { JobRow } from "./types";
 
-const STALE_MS = 15 * 60 * 1000;
+const STALE_MS = HEARTBEAT_STALE_MS;
 
 function isActive(status: JobRow["status"]): boolean {
   return status === "running" || status === "cancelling" || status === "queued";
@@ -14,6 +16,13 @@ async function failIfStale(job: JobRow): Promise<boolean> {
   const age = Date.now() - updated;
   if (age < STALE_MS) return false;
   const mins = Math.max(1, Math.round(age / 60_000));
+  if (job.status === "cancelling") {
+    const result = await finalizeCancel(
+      job.id,
+      `Watchdog: cancel requested but worker silent for ${mins} min`,
+    );
+    return Boolean(result);
+  }
   const result = await forceFailJob(
     job.id,
     `Watchdog: no worker heartbeat for ${mins} min (Cloud Run likely SIGKILL or hung)`,
@@ -41,25 +50,22 @@ export async function reconcileJobExecution(job: JobRow): Promise<boolean> {
     return failIfStale(job);
   }
 
-  const status = (exec?.completionStatus || "").toUpperCase();
-  if (status.includes("FAILED")) {
-    const result = await forceFailJob(
-      job.id,
-      `Cloud Run execution failed: ${name}`,
-    );
+  const action = mapCloudRunCompletion(
+    job.status,
+    exec?.completionStatus ?? null,
+  );
+  if (action === "failed") {
+    const finished = (exec?.completionStatus || "").toUpperCase();
+    const reason = finished.includes("SUCCEEDED")
+      ? `Cloud Run execution finished but job still ${job.status} — worker died before finalize`
+      : `Cloud Run execution failed: ${exec?.name || name}`;
+    const result = await forceFailJob(job.id, reason);
     return Boolean(result);
   }
-  if (status.includes("CANCELLED")) {
-    const result = await forceFailJob(
+  if (action === "cancelled") {
+    const result = await finalizeCancel(
       job.id,
-      `Cloud Run execution cancelled: ${name}`,
-    );
-    return Boolean(result);
-  }
-  if (status.includes("SUCCEEDED") && job.status !== "succeeded") {
-    const result = await forceFailJob(
-      job.id,
-      `Cloud Run execution finished but job still ${job.status} — worker died before finalize`,
+      `Cloud Run execution cancelled: ${exec?.name || name}`,
     );
     return Boolean(result);
   }

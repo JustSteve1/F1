@@ -6,6 +6,7 @@ emitting step progress / logs into Postgres.
 from __future__ import annotations
 
 import os
+import signal
 import sys
 import threading
 import time
@@ -15,10 +16,12 @@ from typing import Any, Callable
 
 # Ensure pipeline package is importable
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "pipeline"))
 
 import db  # noqa: E402
 from ingest_source import assert_fastf1_ingest  # noqa: E402
+from job_control import desired_status_on_stop  # noqa: E402
 
 STEP_ORDER = [
     "load_fastf1",
@@ -45,6 +48,36 @@ STEP_TIMEOUTS_SEC: dict[str, int] = {
     "done": 5 * 60,
 }
 HEARTBEAT_SEC = 30
+
+
+def _install_stop_handlers(job_id: str) -> None:
+    def handler(signum: int, _frame: Any) -> None:
+        job = db.get_job(job_id)
+        if job:
+            nxt = desired_status_on_stop(str(job.get("status") or ""))
+            if nxt == "cancelled":
+                _mark_cancelled(
+                    job_id,
+                    _params(job),
+                    str(job.get("current_step") or "load_fastf1"),
+                )
+            elif nxt == "failed":
+                db.update_job(
+                    job_id,
+                    status="failed",
+                    finished=True,
+                    error=f"Worker received signal {signum} (Cloud Run cancelled or SIGTERM)",
+                    status_message="Worker stopped",
+                )
+                db.append_log(
+                    job_id,
+                    f"Worker received signal {signum}",
+                    level="error",
+                )
+        raise SystemExit(128 + int(signum))
+
+    signal.signal(signal.SIGTERM, handler)
+    signal.signal(signal.SIGINT, handler)
 
 
 def _params(job: dict[str, Any]) -> dict[str, Any]:
@@ -86,7 +119,7 @@ def _run_step(
     fn: Callable[[], None],
 ) -> bool:
     """Returns False if cancelled before/during step."""
-    if db.is_cancelling(job_id):
+    if db.should_stop(job_id):
         return False
 
     db.begin_step(job_id, step_key, label)
@@ -118,7 +151,7 @@ def _run_step(
     try:
         while not done.wait(timeout=HEARTBEAT_SEC):
             db.heartbeat(job_id)
-            if db.is_cancelling(job_id):
+            if db.should_stop(job_id):
                 db.finish_step(job_id, step_key, "cancelled", "Cancelled")
                 return False
             if time.monotonic() > deadline:
@@ -127,7 +160,7 @@ def _run_step(
                 )
         if box:
             raise box[0]
-        if db.is_cancelling(job_id):
+        if db.should_stop(job_id):
             db.finish_step(job_id, step_key, "cancelled", "Cancelled")
             return False
         db.finish_step(job_id, step_key, "succeeded", f"{label} complete")
@@ -169,7 +202,9 @@ def _dry_run(job_id: str, params: dict[str, Any]) -> None:
         label = step.replace("_", " ")
         ok = _run_step(job_id, params, step, label, lambda: time.sleep(0.4))
         if not ok:
-            _mark_cancelled(job_id, params, step)
+            job = db.get_job(job_id)
+            if job and str(job.get("status")) == "cancelling":
+                _mark_cancelled(job_id, params, step)
             return
 
     db.update_job(
@@ -406,7 +441,6 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         ok = _run_step(job_id, params, step_key, label, fn)
         if not ok:
             pipeline_ok = False
-            _mark_cancelled(job_id, params, step_key)
             break
 
     # Persist any cache files obtained this run (success or partial)
@@ -420,6 +454,9 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         )
 
     if not pipeline_ok:
+        job = db.get_job(job_id)
+        if job and str(job.get("status")) == "cancelling":
+            _mark_cancelled(job_id, params, step_key)
         return
 
     db.update_job(
@@ -440,6 +477,7 @@ def run(job_id: str) -> int:
         return 1
 
     params = _params(job)
+    _install_stop_handlers(job_id)
     db.update_job(
         job_id,
         status="running",

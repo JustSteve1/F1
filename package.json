@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:jobs": "node --experimental-strip-types --test lib/jobs/*.test.ts",
     "db:up": "docker compose up -d postgres",
     "db:migrate": "psql \"$DATABASE_URL\" -f db/migrations/001_jobs.sql",
     "smoke:bq-import": "node --env-file=.env.local scripts/smoke-bq-import.mjs"
