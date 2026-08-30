@@ -86,3 +86,28 @@ export function HeartbeatMeter({
     </div>
   );
 }
+
+export function StaleHeartbeatBanner({
+  status,
+  updatedAt,
+}: {
+  status: string;
+  updatedAt: string;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const beat = describeHeartbeat({ status, updatedAt, now });
+  if (beat.health !== "silent") return null;
+
+  return (
+    <p className="mt-2 text-sm text-red-200/90 border border-red-500/30 bg-red-500/10 px-3 py-2 text-left">
+      No heartbeat for {formatAge(beat.ageMs)} — worker likely dead. Cancel
+      stops Cloud Run; Force fail unblocks Retry.
+    </p>
+  );
+}

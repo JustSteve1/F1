@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { StatusBadge } from "./StatusBadge";
-import { HeartbeatMeter } from "./HeartbeatMeter";
+import { HeartbeatMeter, StaleHeartbeatBanner } from "./HeartbeatMeter";
 import { PipelineFlow } from "@/components/admin/pipeline/PipelineFlow";
 import { StepPanel } from "@/components/admin/pipeline/StepPanel";
 import { guideForKey } from "@/lib/jobs/pipeline-guide";
+import { PIPELINE_STEPS } from "@/lib/jobs/steps";
 import type { JobDetail as JobDetailType } from "@/lib/jobs/types";
 
 export function JobDetail({
@@ -96,6 +97,10 @@ export function JobDetail({
           <p className="mt-2 text-sm text-white/80">
             {job.status_message || "—"}
           </p>
+          <StaleHeartbeatBanner
+            status={job.status}
+            updatedAt={job.updated_at}
+          />
           {job.error && (
             <p className="mt-2 text-sm text-red-400 border border-red-500/30 bg-red-500/10 px-3 py-2">
               {job.error}
@@ -117,9 +122,17 @@ export function JobDetail({
         </div>
 
         <div className="text-right space-y-3">
+          <p className="text-[10px] uppercase tracking-widest text-white/35">
+            Pipeline
+          </p>
           <div className="text-3xl font-black tabular-nums text-[#2596be]">
             {Math.round(job.progress_pct)}%
           </div>
+          <p className="text-[11px] text-white/50">
+            {PIPELINE_STEPS.find((s) => s.key === job.current_step)?.label ||
+              job.current_step ||
+              "Queued"}
+          </p>
           <div className="ml-auto h-1.5 w-32 overflow-hidden bg-white/10">
             <div
               className="h-full bg-[#2596be] transition-all duration-500"
