@@ -33,7 +33,9 @@ export async function POST(request: Request) {
           jobId: job.id,
           status: job.status,
           pollUrl: `/api/admin/jobs/${job.id}`,
-          expectedTables: [...EXPECTED_TABLES],
+          expectedTables: params.includeKaggle
+          ? ["for_kaggle_export"]
+          : [...EXPECTED_TABLES],
           sessionKeys: params.years.flatMap((year) =>
             params.sessions.map((session) => ({
               year,
@@ -53,7 +55,9 @@ export async function POST(request: Request) {
         jobId: job.id,
         status: job.status,
         pollUrl: `/api/admin/jobs/${job.id}`,
-        expectedTables: [...EXPECTED_TABLES],
+        expectedTables: params.includeKaggle
+          ? ["for_kaggle_export"]
+          : [...EXPECTED_TABLES],
         sessionKeys: params.years.flatMap((year) =>
           params.sessions.map((session) => ({
             year,

@@ -26,6 +26,7 @@ from job_control import desired_status_on_stop  # noqa: E402
 STEP_ORDER = [
     "load_fastf1",
     "resample_telemetry",
+    "upload_kaggle_export",
     "upload_sessions_laps",
     "upload_telemetry",
     "verify",
@@ -36,15 +37,17 @@ STEP_ORDER = [
 ]
 
 # Per-step wall-clock caps (seconds). Cloud Run --task-timeout is 14400 (4h).
+# Budget is per active path (Kaggle-only vs warehouse), not the sum of every key.
 STEP_TIMEOUTS_SEC: dict[str, int] = {
     "load_fastf1": 20 * 60,
     "resample_telemetry": 90 * 60,
+    "upload_kaggle_export": 15 * 60,
     "upload_sessions_laps": 15 * 60,
     "upload_telemetry": 45 * 60,
     "verify": 10 * 60,
     "quality_checks": 20 * 60,
     "laps_unified": 15 * 60,
-    "kaggle_upload": 20 * 60,
+    "kaggle_upload": 40 * 60,
     "done": 5 * 60,
 }
 HEARTBEAT_SEC = 30
@@ -91,12 +94,29 @@ def _params(job: dict[str, Any]) -> dict[str, Any]:
 
 def _active_steps(params: dict[str, Any]) -> list[str]:
     steps = list(STEP_ORDER)
+    include_kaggle = bool(params.get("includeKaggle"))
+    if include_kaggle:
+        steps = [
+            s
+            for s in steps
+            if s
+            not in (
+                "upload_sessions_laps",
+                "upload_telemetry",
+                "verify",
+                "laps_unified",
+            )
+        ]
+    else:
+        steps = [
+            s
+            for s in steps
+            if s not in ("upload_kaggle_export", "kaggle_upload")
+        ]
     if params.get("skipQuality"):
         steps = [s for s in steps if s != "quality_checks"]
     if params.get("skipUnified"):
         steps = [s for s in steps if s != "laps_unified"]
-    if not params.get("includeKaggle"):
-        steps = [s for s in steps if s != "kaggle_upload"]
     return steps
 
 
@@ -282,9 +302,16 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
 
     def load():
         if skip_existing:
-            state["existing"] = pipe.check_existing(
-                client, years, race, session_types
-            )
+            if include_kaggle:
+                import kaggle_export as kexp
+
+                state["existing"] = kexp.check_existing_kaggle_export(
+                    client, years, race, session_types
+                )
+            else:
+                state["existing"] = pipe.check_existing(
+                    client, years, race, session_types
+                )
         loaded = pipe.load_sessions(
             years, race, session_types, skip_existing, state["existing"]
         )
@@ -326,6 +353,32 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
             job_id, telemetry_df, laps_df, log=_cache_log
         )
 
+    def upload_kaggle_export():
+        if state.get("skip_all_existing"):
+            db.append_log(job_id, "Skip kaggle export table — already present")
+            return
+        import kaggle_export as kexp
+
+        telemetry_df = state.get("telemetry_df")
+        if telemetry_df is None:
+            cached = pipe.load_resample_checkpoint(job_id, log=_cache_log)
+            if cached is None:
+                raise RuntimeError(
+                    "No telemetry dataframe and no resample checkpoint in GCS"
+                )
+            telemetry_df, state["laps_df"] = cached
+            state["telemetry_df"] = telemetry_df
+        kexp.upload_kaggle_export(
+            client,
+            state["loaded"],
+            telemetry_df,
+            years=years,
+            race=race,
+            session_types=session_types,
+            log=_cache_log,
+            job_id=job_id,
+        )
+
     def upload_sessions():
         if state.get("skip_all_existing"):
             db.append_log(job_id, "Skip sessions/laps upload — already present")
@@ -364,6 +417,13 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         if state.get("skip_all_existing"):
             db.append_log(job_id, "Skip quality checks — no new sessions")
             return
+        if include_kaggle:
+            import kaggle_export as kexp
+
+            kexp.run_kaggle_export_quality_checks(
+                client, years, race, session_types, log=_cache_log
+            )
+            return
         pipe.run_quality_checks(client, state["loaded"], race)
 
     def unified():
@@ -381,33 +441,15 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
         api.authenticate()
         bq = bigquery.Client(project=kag.PROJECT)
         existing_df = kag.download_current_kaggle_data(api)
-        bq_laps = kag.fetch_bq_laps(bq)
-        if bq_laps.empty:
-            db.append_log(job_id, "No laps in BigQuery for Kaggle upload")
+        export_df = kag.fetch_bq_laps(bq)
+        if export_df.empty:
+            db.append_log(job_id, "No rows in for_kaggle_export for Kaggle upload")
             return
-        new_laps = kag.find_new_laps(bq_laps, existing_df)
-        if new_laps.empty:
-            db.append_log(job_id, "Kaggle already up to date — nothing new")
-            return
-        telemetry_df = kag.fetch_telemetry_for_laps(bq, new_laps)
-        new_rows = kag.build_kaggle_rows(new_laps, telemetry_df)
-        if existing_df.empty:
-            combined = new_rows
-        else:
-            existing_trimmed = existing_df[
-                new_rows.columns.intersection(existing_df.columns)
-            ]
-            import pandas as pd
-
-            combined = pd.concat([existing_trimmed, new_rows], ignore_index=True)
-        combined = combined.drop_duplicates(
-            subset=[
-                "season",
-                "event_name",
-                "session_type",
-                "driver_number",
-                "lap_number",
-            ]
+        combined = kag.merge_kaggle_csv(existing_df, export_df)
+        db.append_log(
+            job_id,
+            f"Kaggle merge: {len(combined):,} rows "
+            f"({len(export_df):,} from for_kaggle_export)",
         )
         kag.upload_to_kaggle(combined)
 
@@ -424,13 +466,22 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
     plan: list[tuple[str, str, Callable[[], None]]] = [
         ("load_fastf1", "Load FastF1 sessions", load),
         ("resample_telemetry", "Resample telemetry", resample),
-        ("upload_sessions_laps", "Upload sessions & laps", upload_sessions),
-        ("upload_telemetry", "Upload telemetry", upload_telemetry),
-        ("verify", "Verify upload", verify),
     ]
+    if include_kaggle:
+        plan.append(
+            ("upload_kaggle_export", "Upload Kaggle export table", upload_kaggle_export)
+        )
+    else:
+        plan.extend(
+            [
+                ("upload_sessions_laps", "Upload sessions & laps", upload_sessions),
+                ("upload_telemetry", "Upload telemetry", upload_telemetry),
+                ("verify", "Verify upload", verify),
+            ]
+        )
     if not skip_quality:
         plan.append(("quality_checks", "Quality checks", quality))
-    if not skip_unified:
+    if not skip_unified and not include_kaggle:
         plan.append(("laps_unified", "Update laps_unified", unified))
     if include_kaggle:
         plan.append(("kaggle_upload", "Kaggle upload", kaggle))
