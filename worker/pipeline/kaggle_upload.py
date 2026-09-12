@@ -35,6 +35,9 @@ from kaggle.api.kaggle_api_extended import KaggleApi
 PROJECT        = os.environ.get("BQ_PROJECT",      "f1-data-library")
 DATASET        = os.environ.get("BQ_DATASET",      "f1_data_library_DS")
 KAGGLE_DATASET = os.environ.get("KAGGLE_DATASET",  "stevefza/f1-2026-bahrain-testing-day-2")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+KAGGLE_META_PATH = Path(os.environ.get("KAGGLE_META_PATH", REPO_ROOT / "kaggle" / "dataset-metadata.json"))
+KAGGLE_COVER_PATH = Path(os.environ.get("KAGGLE_COVER_PATH", REPO_ROOT / "kaggle" / "dataset-cover-image.png"))
 
 # Telemetry downsampled to 0.5s intervals for Kaggle (matches existing file format)
 TELEMETRY_INTERVAL_KAGGLE = 0.5
@@ -290,6 +293,23 @@ def ensure_kaggle_auth() -> None:
 
 # ── Step 6: Upload to Kaggle ──────────────────────────────────────────────────
 
+def write_kaggle_bundle_metadata(folder: Path, csv_filename: str) -> None:
+    """Copy dataset metadata + cover so version uploads keep the 10/10 usability fields."""
+    folder = Path(folder)
+    if KAGGLE_META_PATH.is_file():
+        meta = json.loads(KAGGLE_META_PATH.read_text())
+        meta["id"] = KAGGLE_DATASET
+        if meta.get("resources"):
+            meta["resources"][0]["path"] = csv_filename
+        (folder / "dataset-metadata.json").write_text(json.dumps(meta, indent=2) + "\n")
+        print(f"  Included {KAGGLE_META_PATH.name} (file path → {csv_filename})")
+    else:
+        print(f"  No {KAGGLE_META_PATH} — uploading CSV only")
+    if KAGGLE_COVER_PATH.is_file():
+        shutil.copy2(KAGGLE_COVER_PATH, folder / "dataset-cover-image.png")
+        print("  Included dataset-cover-image.png")
+
+
 def upload_to_kaggle(combined_df: pd.DataFrame):
     """Save combined CSV and upload as a new Kaggle dataset version via kagglehub."""
     ensure_kaggle_auth()
@@ -302,6 +322,7 @@ def upload_to_kaggle(combined_df: pd.DataFrame):
         combined_df.to_csv(out_path, index=False)
         size_mb = os.path.getsize(out_path) / 1024 / 1024
         print(f"  Saved: {filename} ({size_mb:.1f} MB, {len(combined_df):,} rows)")
+        write_kaggle_bundle_metadata(Path(tmp_dir), filename)
 
         notes = f"Auto-update: {len(combined_df):,} laps as of {today}"
         print(f"  Uploading via kagglehub → kaggle.com/datasets/{KAGGLE_DATASET}…")
