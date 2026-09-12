@@ -42,7 +42,7 @@ gcloud run jobs update "$JOB" \
   --image="$IMAGE" \
   --service-account="$WORKER_SA" \
   --set-cloudsql-instances="$PROJECT:$REGION:interval-jobs" \
-  --max-retries=0 --task-timeout=14400 --memory=4Gi --cpu=2 \
+  --max-retries=0 --task-timeout=14400 --memory=8Gi --cpu=2 \
   --update-env-vars=INGEST_SOURCE=fastf1,FASTF1_CACHE_GCS_URI=gs://f1-data-library-fastf1-cache/fastf1,FASTF1_CACHE_DIR=/tmp/fastf1-cache
 
 echo "Clearing WORKER_DRY_RUN if set …"
