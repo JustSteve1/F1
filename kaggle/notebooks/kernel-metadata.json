@@ -1,6 +1,6 @@
 {
   "id": "stevefza/f1-all-laps-starter",
-  "title": "F1 All Laps starter — load, profile, plot telemetry",
+  "title": "F1 All Laps Starter",
   "code_file": "f1-all-laps-starter.ipynb",
   "language": "python",
   "kernel_type": "notebook",

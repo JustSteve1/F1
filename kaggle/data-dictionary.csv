@@ -1,0 +1,14 @@
+column_name,type,description
+season,integer,Season year (2026)
+event_name,string,Grand Prix or test event name
+circuit,string,Circuit / location name
+session_type,string,"Session code: FP1, FP2, FP3, Q, SQ, R, or test day"
+driver,string,Three-letter driver code (e.g. LEC); falls back to driver number
+driver_number,integer,Car / driver number
+lap_number,integer,Lap number within the session
+lap_time,string,Formatted lap time M:SS.mmm
+lap_duration,decimal,Lap time in seconds (numeric, for ML)
+compound,string,"Tyre compound (SOFT, MEDIUM, HARD, INTERMEDIATE, WET, etc.)"
+tyre_age,integer,Tyre age in laps at the start of this lap
+stint_number,integer,Stint number within the session
+telemetry,string,"JSON array of 0.5s samples. Each object: t (s), speed, throttle, brake, gear, rpm, drs, x, y, z"

@@ -8,13 +8,13 @@
   "keywords": [
     "sports",
     "tabular",
-    "time series",
     "beginner",
     "auto racing",
     "exploratory data analysis"
   ],
   "expectedUpdateFrequency": "weekly",
   "userSpecifiedSources": "FastF1 & OpenF1 APIs",
+  "image": "dataset-cover-image.png",
   "resources": [
     {
       "path": "All Laps - 12 September 2026.csv",
@@ -36,6 +36,47 @@
           {"name": "telemetry", "description": "JSON array of 0.5s samples. Each object: t (s), speed, throttle, brake, gear, rpm, drs, x, y, z", "type": "string"}
         ]
       }
+    },
+    {
+      "path": "data-dictionary.csv",
+      "description": "Column dictionary for the All Laps file: name, type, and meaning of every field including the 0.5s telemetry JSON.",
+      "schema": {
+        "fields": [
+          {"name": "column_name", "description": "Name of the column in the All Laps CSV", "type": "string"},
+          {"name": "type", "description": "Logical type: integer, string, or decimal", "type": "string"},
+          {"name": "description", "description": "What the column contains and how to use it", "type": "string"}
+        ]
+      }
+    }
+  ],
+  "data": [
+    {
+      "name": "All Laps - 12 September 2026.csv",
+      "description": "Cumulative 2026 Formula 1 laps: one row per lap with formatted and numeric lap time, tyre context, and a JSON telemetry array sampled at 0.5s (2 Hz).",
+      "columns": [
+        {"name": "season", "description": "Season year (2026)", "type": "integer"},
+        {"name": "event_name", "description": "Grand Prix or test event name", "type": "string"},
+        {"name": "circuit", "description": "Circuit / location name", "type": "string"},
+        {"name": "session_type", "description": "Session code: FP1, FP2, FP3, Q, SQ, R, or test day", "type": "string"},
+        {"name": "driver", "description": "Three-letter driver code (e.g. LEC); falls back to driver number", "type": "string"},
+        {"name": "driver_number", "description": "Car / driver number", "type": "integer"},
+        {"name": "lap_number", "description": "Lap number within the session", "type": "integer"},
+        {"name": "lap_time", "description": "Formatted lap time M:SS.mmm", "type": "string"},
+        {"name": "lap_duration", "description": "Lap time in seconds (numeric, for ML)", "type": "decimal"},
+        {"name": "compound", "description": "Tyre compound (SOFT, MEDIUM, HARD, INTERMEDIATE, WET, etc.)", "type": "string"},
+        {"name": "tyre_age", "description": "Tyre age in laps at the start of this lap", "type": "integer"},
+        {"name": "stint_number", "description": "Stint number within the session", "type": "integer"},
+        {"name": "telemetry", "description": "JSON array of 0.5s samples. Each object: t (s), speed, throttle, brake, gear, rpm, drs, x, y, z", "type": "string"}
+      ]
+    },
+    {
+      "name": "data-dictionary.csv",
+      "description": "Column dictionary for the All Laps file: name, type, and meaning of every field including the 0.5s telemetry JSON.",
+      "columns": [
+        {"name": "column_name", "description": "Name of the column in the All Laps CSV", "type": "string"},
+        {"name": "type", "description": "Logical type: integer, string, or decimal", "type": "string"},
+        {"name": "description", "description": "What the column contains and how to use it", "type": "string"}
+      ]
     }
   ]
 }

@@ -301,6 +301,8 @@ def write_kaggle_bundle_metadata(folder: Path, csv_filename: str) -> None:
         meta["id"] = KAGGLE_DATASET
         if meta.get("resources"):
             meta["resources"][0]["path"] = csv_filename
+        if meta.get("data"):
+            meta["data"][0]["name"] = csv_filename
         (folder / "dataset-metadata.json").write_text(json.dumps(meta, indent=2) + "\n")
         print(f"  Included {KAGGLE_META_PATH.name} (file path → {csv_filename})")
     else:
@@ -308,10 +310,14 @@ def write_kaggle_bundle_metadata(folder: Path, csv_filename: str) -> None:
     if KAGGLE_COVER_PATH.is_file():
         shutil.copy2(KAGGLE_COVER_PATH, folder / "dataset-cover-image.png")
         print("  Included dataset-cover-image.png")
+    dictionary = KAGGLE_META_PATH.parent / "data-dictionary.csv"
+    if dictionary.is_file():
+        shutil.copy2(dictionary, folder / "data-dictionary.csv")
+        print("  Included data-dictionary.csv")
 
 
 def upload_to_kaggle(combined_df: pd.DataFrame):
-    """Save combined CSV and upload as a new Kaggle dataset version via kagglehub."""
+    """Save combined CSV and upload a new version with file + column metadata."""
     ensure_kaggle_auth()
     today = datetime.now().strftime("%-d %B %Y")   # e.g. "30 April 2026"
     filename = f"All Laps - {today}.csv"
@@ -325,13 +331,26 @@ def upload_to_kaggle(combined_df: pd.DataFrame):
         write_kaggle_bundle_metadata(Path(tmp_dir), filename)
 
         notes = f"Auto-update: {len(combined_df):,} laps as of {today}"
-        print(f"  Uploading via kagglehub → kaggle.com/datasets/{KAGGLE_DATASET}…")
-        kagglehub.dataset_upload(
-            KAGGLE_DATASET,
+        print(f"  Uploading via Kaggle API → kaggle.com/datasets/{KAGGLE_DATASET}…")
+        api = KaggleApi()
+        api.authenticate()
+        result = api.dataset_create_version(
             tmp_dir,
-            version_notes=notes,
+            notes,
+            quiet=False,
+            convert_to_csv=False,
+            dir_mode="skip",
         )
+        if result is None:
+            raise RuntimeError("Dataset version creation failed")
+        if getattr(result, "invalid_tags", None) or getattr(result, "invalidTags", None):
+            print(f"  Invalid tags (ignored): {result.invalid_tags or result.invalidTags}")
+        status = (getattr(result, "status", None) or "").lower()
+        if status and status != "ok":
+            raise RuntimeError(getattr(result, "error", None) or status)
         print(f"  ✅  Uploaded as new version — {filename}")
+        if getattr(result, "url", None):
+            print(f"     {result.url}")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -394,7 +413,7 @@ def main():
 
     print(f"  ✅  Total rows for upload: {len(combined):,}")
 
-    # Step 6: Upload to Kaggle (kagglehub)
+    # Step 6: Upload to Kaggle (official API so file/column docs survive)
     print("\n── Step 6: Upload to Kaggle…")
     upload_to_kaggle(combined)
 
