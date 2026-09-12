@@ -25,7 +25,6 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-import kagglehub
 import pandas as pd
 from google.cloud import bigquery
 from kaggle.api.kaggle_api_extended import KaggleApi
