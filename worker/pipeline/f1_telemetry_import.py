@@ -17,12 +17,15 @@ Requirements:
 
 import argparse
 import hashlib
+import io
 import json
 import logging
 import os
 import sys
 import warnings
 from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlparse
 
 import fastf1
 import numpy as np
@@ -88,7 +91,156 @@ def safe_str(val):
     return str(val)
 
 
+def format_lap_time(seconds) -> str | None:
+    """OpenF1-style lap clock, e.g. 1:12.345."""
+    if seconds is None:
+        return None
+    try:
+        total = float(seconds)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(total):
+        return None
+    sign = "-" if total < 0 else ""
+    total = abs(total)
+    minutes = int(total // 60)
+    return f"{sign}{minutes}:{total - minutes * 60:06.3f}"
+
+
+def _json_value(val):
+    """Normalize a value for a BigQuery JSON column (native list/dict, not a string)."""
+    if val is None:
+        return None
+    try:
+        if pd.isna(val):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, np.ndarray):
+        return val.tolist()
+    if isinstance(val, tuple):
+        return list(val)
+    if isinstance(val, list):
+        return val
+    if isinstance(val, str):
+        text = val.strip()
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
+    return None
+
+
+def _lap_segments(lap, sector: int):
+    for key in (
+        f"Sector{sector}Segments",
+        f"segments_sector_{sector}",
+        f"Sector{sector}",
+    ):
+        if key in ("Sector1", "Sector2", "Sector3"):
+            # Those names are lap times on FastF1; skip unless list-like.
+            val = lap.get(key) if hasattr(lap, "get") else None
+            if isinstance(val, (list, tuple, np.ndarray)):
+                return _json_value(val)
+            continue
+        if hasattr(lap, "get"):
+            parsed = _json_value(lap.get(key))
+            if parsed is not None:
+                return parsed
+    return None
+
+
+def schema_for_load(schema):
+    """Parquet / pandas load jobs cannot target JSON columns."""
+    return [
+        field
+        for field in schema
+        if (getattr(field, "field_type", None) or "").upper() != "JSON"
+    ]
+
+
+def _empty_series(index, ftype: str) -> pd.Series:
+    kind = (ftype or "").upper()
+    n = len(index)
+    if kind in ("INTEGER", "INT64"):
+        return pd.Series(pd.array([pd.NA] * n, dtype="Int64"), index=index)
+    if kind in ("FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC"):
+        return pd.Series(np.nan, index=index, dtype="float64")
+    if kind in ("BOOLEAN", "BOOL"):
+        return pd.Series(pd.array([pd.NA] * n, dtype="boolean"), index=index)
+    if kind in ("TIMESTAMP", "DATETIME", "DATE"):
+        return pd.Series(pd.NaT, index=index)
+    return pd.Series([None] * n, index=index, dtype="object")
+
+
+def lap_row_from_fastf1(lap, *, session_key: int, year: int, event_name: str, session_type: str, imported_at: str) -> dict:
+    """Map a FastF1 lap onto both legacy warehouse names and OpenF1-style aliases."""
+    sector_1 = timedelta_to_seconds(lap.get("Sector1Time"))
+    sector_2 = timedelta_to_seconds(lap.get("Sector2Time"))
+    sector_3 = timedelta_to_seconds(lap.get("Sector3Time"))
+    speed_i1 = safe_float(lap.get("SpeedI1"))
+    speed_i2 = safe_float(lap.get("SpeedI2"))
+    speed_st = safe_float(lap.get("SpeedST"))
+    pit_out = timedelta_to_seconds(lap.get("PitOutTime"))
+    lap_duration = timedelta_to_seconds(lap.get("LapTime"))
+    date_start = to_timestamp(lap.get("LapStartDate"))
+    return {
+        "session_key": session_key,
+        "meeting_key": session_key,
+        "season": year,
+        "event_name": event_name,
+        "session_type": session_type,
+        "driver_number": safe_str(lap.get("DriverNumber")),
+        "driver_code": safe_str(lap.get("Driver")),
+        "team": safe_str(lap.get("Team")),
+        "position": safe_int(lap.get("Position")),
+        "lap_number": safe_int(lap.get("LapNumber")),
+        "lap_duration": lap_duration,
+        "lap_time_formatted": format_lap_time(lap_duration),
+        "lap_start_time": timedelta_to_seconds(lap.get("Time")),
+        "sector_1_time": sector_1,
+        "sector_2_time": sector_2,
+        "sector_3_time": sector_3,
+        "duration_sector_1": sector_1,
+        "duration_sector_2": sector_2,
+        "duration_sector_3": sector_3,
+        "sector_1_session_time": timedelta_to_seconds(lap.get("Sector1SessionTime")),
+        "sector_2_session_time": timedelta_to_seconds(lap.get("Sector2SessionTime")),
+        "sector_3_session_time": timedelta_to_seconds(lap.get("Sector3SessionTime")),
+        "pit_out_time": pit_out,
+        "pit_in_time": timedelta_to_seconds(lap.get("PitInTime")),
+        "is_pit_out_lap": bool(pit_out is not None),
+        "speed_i1": speed_i1,
+        "speed_i2": speed_i2,
+        "speed_st": speed_st,
+        "i1_speed": speed_i1,
+        "i2_speed": speed_i2,
+        "st_speed": speed_st,
+        "compound": safe_str(lap.get("Compound")),
+        "tyre_age_laps": safe_int(lap.get("TyreLife")),
+        "stint_number": safe_int(lap.get("Stint")),
+        "fresh_tyre": safe_bool(lap.get("FreshTyre")),
+        "is_accurate": safe_bool(lap.get("IsAccurate")),
+        "is_personal_best": safe_bool(lap.get("IsPersonalBest")),
+        "deleted": safe_bool(lap.get("Deleted")),
+        "deleted_reason": safe_str(lap.get("DeletedReason")),
+        "fastf1_generated": safe_bool(lap.get("FastF1Generated")),
+        "track_status": safe_str(lap.get("TrackStatus")),
+        "lap_start_date": date_start,
+        "date_start": date_start,
+        "segments_sector_1": _lap_segments(lap, 1),
+        "segments_sector_2": _lap_segments(lap, 2),
+        "segments_sector_3": _lap_segments(lap, 3),
+        "imported_at": imported_at,
+    }
+
+
 def upload_in_batches(client, table_ref, rows, batch_size=1000, label="rows"):
+    """Streaming insert for small tables (sessions). Do not use for telemetry."""
     total = len(rows)
     uploaded = 0
     for i in range(0, total, batch_size):
@@ -100,6 +252,292 @@ def upload_in_batches(client, table_ref, rows, batch_size=1000, label="rows"):
         if total > batch_size and uploaded % 10_000 == 0:
             print(f"  {uploaded:,} / {total:,} {label} uploaded…")
     return uploaded
+
+
+def _staging_parquet_uri(job_id: str | None, filename: str) -> str:
+    cache_uri = os.environ.get("FASTF1_CACHE_GCS_URI", "").strip()
+    bucket = "f1-data-library-fastf1-cache"
+    if cache_uri.startswith("gs://"):
+        bucket = urlparse(cache_uri).netloc or bucket
+    jid = job_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"gs://{bucket}/staging/{jid}/{filename}"
+
+
+def _gcs_blob(uri: str):
+    from google.cloud import storage
+
+    parsed = urlparse(uri)
+    client = storage.Client()
+    return client.bucket(parsed.netloc).blob(parsed.path.lstrip("/")), client
+
+
+def write_resample_checkpoint(job_id: str, telemetry_df, laps_df, *, log=print) -> dict:
+    """Persist resampled frames so upload can resume after a Cloud Run kill."""
+    tel_uri = _staging_parquet_uri(job_id, "telemetry.parquet")
+    laps_uri = _staging_parquet_uri(job_id, "laps.parquet")
+    tmp = Path("/tmp") / f"ckpt-{job_id}"
+    tmp.mkdir(parents=True, exist_ok=True)
+    tel_path = tmp / "telemetry.parquet"
+    laps_path = tmp / "laps.parquet"
+    telemetry_df.to_parquet(tel_path, index=False)
+    (laps_df if laps_df is not None else pd.DataFrame()).to_parquet(
+        laps_path, index=False
+    )
+    tel_blob, _ = _gcs_blob(tel_uri)
+    laps_blob, _ = _gcs_blob(laps_uri)
+    tel_blob.upload_from_filename(str(tel_path))
+    laps_blob.upload_from_filename(str(laps_path))
+    log(
+        f"Wrote resample checkpoint {tel_uri} "
+        f"({len(telemetry_df):,} telemetry rows, {len(laps_df) if laps_df is not None else 0:,} laps)"
+    )
+    return {
+        "telemetry_uri": tel_uri,
+        "laps_uri": laps_uri,
+        "telemetry_rows": int(len(telemetry_df)),
+        "laps_rows": int(len(laps_df) if laps_df is not None else 0),
+    }
+
+
+def load_resample_checkpoint(job_id: str, *, log=print):
+    """Return (telemetry_df, laps_df) if a checkpoint exists, else None."""
+    tel_uri = _staging_parquet_uri(job_id, "telemetry.parquet")
+    laps_uri = _staging_parquet_uri(job_id, "laps.parquet")
+    tel_blob, _ = _gcs_blob(tel_uri)
+    if not tel_blob.exists():
+        return None
+    tmp = Path("/tmp") / f"ckpt-load-{job_id}"
+    tmp.mkdir(parents=True, exist_ok=True)
+    tel_path = tmp / "telemetry.parquet"
+    laps_path = tmp / "laps.parquet"
+    tel_blob.download_to_filename(str(tel_path))
+    telemetry_df = pd.read_parquet(tel_path)
+    laps_df = pd.DataFrame()
+    laps_blob, _ = _gcs_blob(laps_uri)
+    if laps_blob.exists():
+        laps_blob.download_to_filename(str(laps_path))
+        laps_df = pd.read_parquet(laps_path)
+    log(
+        f"Using checkpoint from {tel_uri} "
+        f"({len(telemetry_df):,} telemetry rows, {len(laps_df):,} laps)"
+    )
+    return telemetry_df, laps_df
+
+
+def delete_resample_checkpoint(job_id: str, *, log=print) -> int:
+    """Remove staging/{job_id}/ after a successful pipeline."""
+    marker = _staging_parquet_uri(job_id, "_")
+    parsed = urlparse(marker)
+    prefix = parsed.path.lstrip("/").rsplit("/", 1)[0] + "/"
+    from google.cloud import storage
+
+    client = storage.Client()
+    deleted = 0
+    for blob in client.list_blobs(parsed.netloc, prefix=prefix):
+        blob.delete()
+        deleted += 1
+    log(f"Deleted {deleted} checkpoint object(s) under gs://{parsed.netloc}/{prefix}")
+    return deleted
+
+
+def _coerce_df_for_table(client, table_ref: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Align pandas dtypes to an existing BigQuery table schema.
+
+    Missing columns are filled with NA so load jobs receive the destination
+    column set. JSON columns are kept as native Python objects (list/dict)
+    for newline-delimited JSON loads — Parquet cannot write BQ JSON.
+    """
+    table = client.get_table(table_ref)
+    out = pd.DataFrame(index=df.index)
+    for field in table.schema:
+        ftype = (field.field_type or "").upper()
+        if field.name not in df.columns:
+            out[field.name] = _empty_series(df.index, ftype)
+            continue
+        col = df[field.name]
+        if ftype in ("INTEGER", "INT64"):
+            out[field.name] = pd.to_numeric(col, errors="coerce").astype("Int64")
+        elif ftype in ("FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC"):
+            out[field.name] = pd.to_numeric(col, errors="coerce")
+        elif ftype in ("BOOLEAN", "BOOL"):
+            out[field.name] = col.map(
+                lambda v: None
+                if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v)
+                else bool(v)
+            ).astype("boolean")
+        elif ftype in ("TIMESTAMP", "DATETIME"):
+            out[field.name] = pd.to_datetime(col, utc=True, errors="coerce")
+        elif ftype == "DATE":
+            ts = pd.to_datetime(col, utc=True, errors="coerce")
+            out[field.name] = ts.dt.date
+        elif ftype == "JSON":
+            out[field.name] = col.map(_json_value)
+        else:
+            out[field.name] = col.map(
+                lambda v: None
+                if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v)
+                else str(v)
+            )
+    return out
+
+
+def _json_field_names(schema) -> list[str]:
+    return [
+        field.name
+        for field in schema
+        if (getattr(field, "field_type", None) or "").upper() == "JSON"
+    ]
+
+
+def _drop_columns(df: pd.DataFrame, names: list[str]) -> pd.DataFrame:
+    present = [name for name in names if name in df.columns]
+    return df.drop(columns=present) if present else df
+
+
+def _load_ndjson(client, table_ref: str, df: pd.DataFrame, schema, *, log, label: str) -> dict:
+    """Load via newline-delimited JSON so BQ JSON columns can be written."""
+    payload = df.to_json(orient="records", lines=True, date_format="iso")
+    buf = io.BytesIO(payload.encode("utf-8"))
+    job_config = bigquery.LoadJobConfig(
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        schema=schema,
+    )
+    load_job = client.load_table_from_file(buf, table_ref, job_config=job_config)
+    load_job.result()
+    log(
+        f"BigQuery load job {load_job.job_id}: "
+        f"{len(df):,} {label} → {table_ref} (ndjson)"
+    )
+    return {
+        "rows": len(df),
+        "bq_job_id": load_job.job_id,
+        "method": "ndjson",
+    }
+
+
+def load_dataframe(
+    client,
+    table_ref: str,
+    df: pd.DataFrame,
+    *,
+    log=print,
+    job_id: str | None = None,
+    label: str = "rows",
+) -> dict:
+    """Bulk-append a DataFrame via a BigQuery load job (not streaming insert).
+
+    Tables with JSON columns are loaded as newline-delimited JSON — Parquet and
+    pandas→Parquet loads reject any destination schema that includes JSON,
+    even when the file has no such field.
+
+    Other tables try load_table_from_dataframe first, then Parquet on GCS.
+    JSON columns are stripped from that Parquet fallback schema.
+    """
+    if df is None or len(df) == 0:
+        log(f"No {label} to load")
+        return {"rows": 0, "bq_job_id": None, "method": "skip"}
+
+    coerced = _coerce_df_for_table(client, table_ref, df)
+    table = client.get_table(table_ref)
+    json_cols = _json_field_names(table.schema)
+    load_schema = schema_for_load(table.schema)
+
+    if json_cols:
+        try:
+            return _load_ndjson(
+                client, table_ref, coerced, table.schema, log=log, label=label
+            )
+        except Exception as exc:
+            log(
+                f"newline-delimited JSON load failed ({exc}); "
+                f"retrying without JSON column(s): {', '.join(json_cols)}"
+            )
+            coerced = _drop_columns(coerced, json_cols)
+
+    job_config = bigquery.LoadJobConfig(
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        schema=load_schema,
+    )
+    try:
+        load_job = client.load_table_from_dataframe(
+            coerced, table_ref, job_config=job_config
+        )
+        load_job.result()
+        log(
+            f"BigQuery load job {load_job.job_id}: "
+            f"{len(coerced):,} {label} → {table_ref} (dataframe)"
+        )
+        return {
+            "rows": len(coerced),
+            "bq_job_id": load_job.job_id,
+            "method": "dataframe",
+        }
+    except Exception as exc:
+        log(
+            f"load_table_from_dataframe failed ({exc}); "
+            "falling back to Parquet GCS load"
+        )
+
+    parquet_df = _drop_columns(coerced, json_cols)
+    uri = _staging_parquet_uri(job_id, f"{label.replace(' ', '_')}.parquet")
+    parsed = urlparse(uri)
+    local_path = Path("/tmp") / parsed.path.lstrip("/").replace("/", "_")
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    parquet_df.to_parquet(local_path, index=False)
+
+    from google.cloud import storage
+
+    storage.Client().bucket(parsed.netloc).blob(
+        parsed.path.lstrip("/")
+    ).upload_from_filename(str(local_path))
+    parquet_config = bigquery.LoadJobConfig(
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        source_format=bigquery.SourceFormat.PARQUET,
+        schema=load_schema,
+    )
+    load_job = client.load_table_from_uri(uri, table_ref, job_config=parquet_config)
+    load_job.result()
+    log(
+        f"BigQuery load job {load_job.job_id}: "
+        f"{len(parquet_df):,} {label} → {table_ref} (parquet {uri})"
+    )
+    return {
+        "rows": len(parquet_df),
+        "bq_job_id": load_job.job_id,
+        "method": "parquet",
+        "uri": uri,
+    }
+
+
+def session_keys_for_loaded(loaded_sessions) -> list[int]:
+    keys: list[int] = []
+    for (year, stype), session in loaded_sessions.items():
+        keys.append(
+            generate_session_key(year, session.event["EventName"], stype)
+        )
+    return keys
+
+
+def delete_session_rows(client, session_keys, tables, *, log=print) -> None:
+    """Remove existing warehouse rows for these session_keys (replace, not append)."""
+    keys = [int(k) for k in session_keys if k is not None]
+    if not keys:
+        return
+    key_list = ", ".join(str(k) for k in keys)
+    for table in tables:
+        q = (
+            f"DELETE FROM `{PROJECT}.{DATASET}.{table}` "
+            f"WHERE session_key IN ({key_list})"
+        )
+        job = client.query(q)
+        job.result()
+        affected = job.num_dml_affected_rows
+        log(
+            f"Deleted {affected if affected is not None else '?'} "
+            f"{table} row(s) for session_key IN ({key_list}) "
+            f"(job {job.job_id})"
+        )
 
 
 # ── Step 1: Check existing data ───────────────────────────────────────────────
@@ -392,22 +830,24 @@ def resample_lap_telemetry(lap, interval_sec=TELEMETRY_INTERVAL):
         return []
 
 
-def extract_telemetry(loaded_sessions):
+def extract_telemetry(loaded_sessions, log=print, interval_sec=TELEMETRY_INTERVAL):
     all_telemetry = []
     all_laps = []
     _TELEM_LOAD_STATS["get_telemetry_ok"] = 0
     _TELEM_LOAD_STATS["car_data_fallback_ok"] = 0
     _TELEM_LOAD_STATS["failed"] = 0
     _TELEM_LOAD_STATS["failed_examples"] = []
+    hz = (1.0 / interval_sec) if interval_sec else 0.0
+    log(f"  Resample interval={interval_sec}s ({hz:g} Hz)")
 
     for (year, stype), session in loaded_sessions.items():
         event_name = session.event["EventName"]
         circuit = session.event.get("Location", "")
-        print(f"  Extracting {year} {stype} ({len(session.laps)} laps)…")
+        log(f"  Extracting {year} {stype} ({len(session.laps)} laps)…")
         laps_with_points = 0
 
         for _, lap in session.laps.iterrows():
-            points = resample_lap_telemetry(lap)
+            points = resample_lap_telemetry(lap, interval_sec=interval_sec)
             if points:
                 laps_with_points += 1
             for p in points:
@@ -429,7 +869,7 @@ def extract_telemetry(loaded_sessions):
                 "sector_2": timedelta_to_seconds(lap.get("Sector2Time")),
                 "sector_3": timedelta_to_seconds(lap.get("Sector3Time")),
             })
-        print(
+        log(
             f"     telem coverage: {laps_with_points}/{len(session.laps)} laps "
             f"(get_telemetry={_TELEM_LOAD_STATS['get_telemetry_ok']}, "
             f"car_fallback={_TELEM_LOAD_STATS['car_data_fallback_ok']}, "
@@ -440,16 +880,19 @@ def extract_telemetry(loaded_sessions):
         subset=["season", "session_type", "driver_number", "lap_number", "lap_time_sec"]
     )
     laps_df = pd.DataFrame(all_laps)
-    print(f"  ✅  {len(telemetry_df):,} telemetry points, {len(laps_df):,} laps extracted")
+    log(f"  ✅  {len(telemetry_df):,} telemetry points, {len(laps_df):,} laps extracted")
     return telemetry_df, laps_df
 
 
 # ── Step 4: Upload sessions + laps ───────────────────────────────────────────
 
-def upload_sessions_and_laps(client, loaded_sessions, laps_df, race):
+def upload_sessions_and_laps(client, loaded_sessions, laps_df, race, *, log=print, job_id=None):
     now = datetime.now(timezone.utc).isoformat()
+    keys = session_keys_for_loaded(loaded_sessions)
+    # Replace this session's facts; do not append duplicates on retry.
+    delete_session_rows(client, keys, ("laps", "telemetry"), log=log)
 
-    # Sessions
+    # Sessions — skip if session_key already present
     sessions_rows = []
     for (year, stype), session in loaded_sessions.items():
         sk = generate_session_key(year, session.event["EventName"], stype)
@@ -469,85 +912,67 @@ def upload_sessions_and_laps(client, loaded_sessions, laps_df, race):
             "imported_at": now,
         })
 
-    errors = client.insert_rows_json(f"{PROJECT}.{DATASET}.sessions", sessions_rows)
-    if errors:
-        print(f"  ⚠  Session upload errors: {errors[:2]}")
-    else:
-        print(f"  ✅  {len(sessions_rows)} session(s) uploaded")
+    existing_sk: set[int] = set()
+    if keys:
+        key_list = ", ".join(str(k) for k in keys)
+        try:
+            existing_df = client.query(
+                f"SELECT session_key FROM `{PROJECT}.{DATASET}.sessions` "
+                f"WHERE session_key IN ({key_list})"
+            ).to_dataframe()
+            existing_sk = {int(v) for v in existing_df["session_key"].tolist()}
+        except Exception as exc:
+            log(f"Session existence check failed (inserting all): {exc}")
 
-    # Laps — full schema (Cell 7 style)
+    new_sessions = [r for r in sessions_rows if r["session_key"] not in existing_sk]
+    skipped = len(sessions_rows) - len(new_sessions)
+    if skipped:
+        log(f"Skip {skipped} existing session row(s)")
+    if new_sessions:
+        errors = client.insert_rows_json(
+            f"{PROJECT}.{DATASET}.sessions", new_sessions
+        )
+        if errors:
+            log(f"Session upload errors: {errors[:2]}")
+        else:
+            log(f"{len(new_sessions)} session(s) uploaded")
+    elif not sessions_rows:
+        log("No sessions to upload")
+
+    # Laps — full schema; session already wiped
     laps_full = []
     for (year, stype), session in loaded_sessions.items():
         sk = generate_session_key(year, session.event["EventName"], stype)
-        # Dedup check
-        check_q = f"""
-            SELECT CONCAT(CAST(session_key AS STRING), '-', driver_number, '-', CAST(lap_number AS STRING)) as lap_id
-            FROM `{PROJECT}.{DATASET}.laps`
-            WHERE session_key = {sk}
-        """
-        try:
-            existing_ids = set(client.query(check_q).to_dataframe()["lap_id"].tolist())
-        except Exception:
-            existing_ids = set()
-
         for _, lap in session.laps.iterrows():
-            lap_id = f"{sk}-{lap.get('DriverNumber')}-{lap.get('LapNumber')}"
-            if lap_id in existing_ids:
-                continue
-            laps_full.append({
-                "session_key": sk,
-                "meeting_key": sk,
-                "season": year,
-                "event_name": session.event["EventName"],
-                "session_type": stype,
-                "driver_number": safe_str(lap.get("DriverNumber")),
-                "driver_code": safe_str(lap.get("Driver")),
-                "team": safe_str(lap.get("Team")),
-                "position": safe_int(lap.get("Position")),
-                "lap_number": safe_int(lap.get("LapNumber")),
-                "lap_duration": timedelta_to_seconds(lap.get("LapTime")),
-                "lap_start_time": timedelta_to_seconds(lap.get("Time")),
-                "sector_1_time": timedelta_to_seconds(lap.get("Sector1Time")),
-                "sector_2_time": timedelta_to_seconds(lap.get("Sector2Time")),
-                "sector_3_time": timedelta_to_seconds(lap.get("Sector3Time")),
-                "sector_1_session_time": timedelta_to_seconds(lap.get("Sector1SessionTime")),
-                "sector_2_session_time": timedelta_to_seconds(lap.get("Sector2SessionTime")),
-                "sector_3_session_time": timedelta_to_seconds(lap.get("Sector3SessionTime")),
-                "pit_out_time": timedelta_to_seconds(lap.get("PitOutTime")),
-                "pit_in_time": timedelta_to_seconds(lap.get("PitInTime")),
-                "speed_i1": safe_float(lap.get("SpeedI1")),
-                "speed_i2": safe_float(lap.get("SpeedI2")),
-                "speed_st": safe_float(lap.get("SpeedST")),
-                "compound": safe_str(lap.get("Compound")),
-                "tyre_age_laps": safe_int(lap.get("TyreLife")),
-                "stint_number": safe_int(lap.get("Stint")),
-                "fresh_tyre": safe_bool(lap.get("FreshTyre")),
-                "is_accurate": safe_bool(lap.get("IsAccurate")),
-                "is_personal_best": safe_bool(lap.get("IsPersonalBest")),
-                "deleted": safe_bool(lap.get("Deleted")),
-                "deleted_reason": safe_str(lap.get("DeletedReason")),
-                "fastf1_generated": safe_bool(lap.get("FastF1Generated")),
-                "track_status": safe_str(lap.get("TrackStatus")),
-                "lap_start_date": to_timestamp(lap.get("LapStartDate")),
-                "imported_at": now,
-            })
+            laps_full.append(
+                lap_row_from_fastf1(
+                    lap,
+                    session_key=sk,
+                    year=year,
+                    event_name=session.event["EventName"],
+                    session_type=stype,
+                    imported_at=now,
+                )
+            )
 
     if laps_full:
-        uploaded = upload_in_batches(
+        result = load_dataframe(
             client,
             f"{PROJECT}.{DATASET}.laps",
-            laps_full,
-            batch_size=500,
+            pd.DataFrame(laps_full),
+            log=log,
+            job_id=job_id,
             label="laps",
         )
-        print(f"  ✅  {uploaded:,} laps uploaded")
-    else:
-        print("  ⏭  No new laps to upload")
+        log(f"{result['rows']:,} laps uploaded")
+        return result
+    log("No new laps to upload")
+    return {"rows": 0, "bq_job_id": None, "method": "skip"}
 
 
 # ── Step 5: Upload telemetry ──────────────────────────────────────────────────
 
-def upload_telemetry(client, telemetry_df, loaded_sessions):
+def upload_telemetry(client, telemetry_df, loaded_sessions, *, log=print, job_id=None):
     now = datetime.now(timezone.utc).isoformat()
     telemetry_df = telemetry_df.copy()
     telemetry_df["imported_at"] = now
@@ -556,6 +981,8 @@ def upload_telemetry(client, telemetry_df, loaded_sessions):
         lambda r: generate_session_key(r["season"], r["event_name"], r["session_type"]), axis=1
     )
     telemetry_df["meeting_key"] = telemetry_df["session_key"]
+    keys = sorted({int(k) for k in telemetry_df["session_key"].tolist()})
+    delete_session_rows(client, keys, ("telemetry",), log=log)
 
     cols = [
         "session_key", "meeting_key", "season", "driver_number", "lap_number",
@@ -567,12 +994,16 @@ def upload_telemetry(client, telemetry_df, loaded_sessions):
         "date", "imported_at",
     ]
     upload_df = telemetry_df[[c for c in cols if c in telemetry_df.columns]].copy()
-    upload_df = upload_df.where(pd.notnull(upload_df), None)
-    # to_dict("records") leaves NaN floats that break insert_rows_json; use JSON round-trip
-    rows = json.loads(upload_df.to_json(orient="records", date_format="iso"))
-
-    uploaded = upload_in_batches(client, f"{PROJECT}.{DATASET}.telemetry", rows, label="telemetry points")
-    print(f"  ✅  {uploaded:,} telemetry points uploaded")
+    result = load_dataframe(
+        client,
+        f"{PROJECT}.{DATASET}.telemetry",
+        upload_df,
+        log=log,
+        job_id=job_id,
+        label="telemetry points",
+    )
+    log(f"{result['rows']:,} telemetry points uploaded")
+    return result
 
 
 # ── Step 6: Verify upload ─────────────────────────────────────────────────────

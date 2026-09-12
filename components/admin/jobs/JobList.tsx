@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { StatusBadge } from "./StatusBadge";
+import { HeartbeatMeter } from "./HeartbeatMeter";
 import type { JobRow } from "@/lib/jobs/types";
 
 export function JobList({
@@ -53,6 +54,11 @@ export function JobList({
             <p className="mt-1.5 truncate text-[11px] text-white/45">
               {job.status_message || job.current_step || "—"}
             </p>
+            <HeartbeatMeter
+              compact
+              status={job.status}
+              updatedAt={job.updated_at}
+            />
           </Link>
         );
       })}

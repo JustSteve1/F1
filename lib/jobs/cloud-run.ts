@@ -1,4 +1,12 @@
 import { GoogleAuth, type JWTInput } from "google-auth-library";
+import {
+  isExecutionResource,
+  isOperationResource,
+  isRemoteCloudRunName,
+  parseExecutionInfo,
+  pickExecutionName,
+  type ExecutionNamePayload,
+} from "./cloud-run-names";
 import { appendJobLog, setCloudRunExecution } from "./queries";
 
 export type WorkerMode = "cloud_run" | "stub" | "local";
@@ -9,6 +17,18 @@ export function getWorkerMode(): WorkerMode {
   return "stub";
 }
 
+export function requireFastf1IngestSource(
+  raw: string | undefined = process.env.INGEST_SOURCE,
+): "fastf1" {
+  const source = (raw || "fastf1").trim().toLowerCase() || "fastf1";
+  if (source !== "fastf1") {
+    throw new Error(
+      `INGEST_SOURCE=${source} is not supported; v1 ingest is FastF1 only`,
+    );
+  }
+  return "fastf1";
+}
+
 /**
  * Resolve GCP credentials for Cloud Run Jobs triggers.
  *
@@ -17,7 +37,7 @@ export function getWorkerMode(): WorkerMode {
  * 2. GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY — split env vars
  * 3. GOOGLE_APPLICATION_CREDENTIALS / ADC — local path or ambient credentials
  */
-function getGoogleAuth(): GoogleAuth {
+export function getGoogleAuth(): GoogleAuth {
   const scopes = ["https://www.googleapis.com/auth/cloud-platform"];
   const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY?.trim();
   if (keyJson) {
@@ -46,11 +66,173 @@ function getGoogleAuth(): GoogleAuth {
   return new GoogleAuth({ scopes });
 }
 
+async function getAccessToken(): Promise<string> {
+  const auth = getGoogleAuth();
+  const client = await auth.getClient();
+  const token = await client.getAccessToken();
+  if (!token.token) {
+    throw new Error("Failed to obtain GCP access token");
+  }
+  return token.token;
+}
+
+export type CloudRunExecutionInfo = {
+  name: string;
+  completionStatus: string | null;
+  reconciling: boolean;
+};
+
+async function googleGetJson(resourceName: string): Promise<unknown | null> {
+  const token = await getAccessToken();
+  const url = `https://run.googleapis.com/v2/${resourceName}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Cloud Run get failed (${res.status}): ${text.slice(0, 300)}`,
+    );
+  }
+  return res.json();
+}
+
+export async function getCloudRunExecution(
+  executionName: string,
+): Promise<CloudRunExecutionInfo | null> {
+  if (!isRemoteCloudRunName(executionName)) return null;
+  const data = await googleGetJson(executionName);
+  if (!data || typeof data !== "object") return null;
+  let info = parseExecutionInfo(data as ExecutionNamePayload, executionName);
+  // `:run` may have stored an Operation name. Follow it to the Execution.
+  if (
+    isOperationResource(executionName) &&
+    info.name !== executionName &&
+    isExecutionResource(info.name)
+  ) {
+    const exec = await googleGetJson(info.name);
+    if (exec && typeof exec === "object") {
+      info = parseExecutionInfo(exec as ExecutionNamePayload, info.name);
+    }
+  }
+  return info;
+}
+
+export type StopExecutionResult = {
+  attempted: boolean;
+  cancelled: boolean;
+  alreadyStopped: boolean;
+  executionName: string | null;
+  detail: string;
+};
+
+/**
+ * Cancel a Cloud Run Job execution. Stub/local names are no-ops.
+ * 404 / already-completed executions count as alreadyStopped so the
+ * admin Cancel path can finalize Postgres immediately.
+ */
+export async function stopCloudRunExecution(
+  storedName: string | null | undefined,
+): Promise<StopExecutionResult> {
+  if (!isRemoteCloudRunName(storedName)) {
+    return {
+      attempted: false,
+      cancelled: false,
+      alreadyStopped: true,
+      executionName: storedName ?? null,
+      detail: storedName
+        ? `No Cloud Run execution to stop (${storedName})`
+        : "No Cloud Run execution to stop",
+    };
+  }
+
+  try {
+    const info = await getCloudRunExecution(storedName);
+    const executionName =
+      info?.name && isExecutionResource(info.name) ? info.name : storedName;
+    if (!isExecutionResource(executionName)) {
+      return {
+        attempted: true,
+        cancelled: false,
+        alreadyStopped: true,
+        executionName: storedName,
+        detail: `Cloud Run execution not found: ${storedName}`,
+      };
+    }
+
+    const done = (info?.completionStatus || "").toUpperCase();
+    if (
+      done.includes("SUCCEEDED") ||
+      done.includes("FAILED") ||
+      done.includes("CANCELLED")
+    ) {
+      return {
+        attempted: true,
+        cancelled: false,
+        alreadyStopped: true,
+        executionName,
+        detail: `Cloud Run execution already ${info?.completionStatus}: ${executionName}`,
+      };
+    }
+
+    const token = await getAccessToken();
+    const url = `https://run.googleapis.com/v2/${executionName}:cancel`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+
+    if (res.ok) {
+      return {
+        attempted: true,
+        cancelled: true,
+        alreadyStopped: false,
+        executionName,
+        detail: `Cancelled Cloud Run execution: ${executionName}`,
+      };
+    }
+
+    const text = await res.text();
+    if (res.status === 404 || res.status === 400 || res.status === 409) {
+      return {
+        attempted: true,
+        cancelled: false,
+        alreadyStopped: true,
+        executionName,
+        detail: `Cloud Run execution already stopped (${res.status}): ${text.slice(0, 200)}`,
+      };
+    }
+
+    return {
+      attempted: true,
+      cancelled: false,
+      alreadyStopped: false,
+      executionName,
+      detail: `Cloud Run cancel failed (${res.status}): ${text.slice(0, 300)}`,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      attempted: true,
+      cancelled: false,
+      alreadyStopped: false,
+      executionName: storedName,
+      detail: `Cloud Run cancel error: ${message}`,
+    };
+  }
+}
+
 /**
  * Trigger the Cloud Run Job execution for a queued job.
  * Uses JSON key env vars (Vercel) or ADC / key file (local).
  */
 export async function triggerCloudRunJob(jobId: string): Promise<string> {
+  const ingestSource = requireFastf1IngestSource();
   const project = process.env.GCP_PROJECT_ID;
   const region = process.env.CLOUD_RUN_REGION || "europe-west1";
   const jobName = process.env.CLOUD_RUN_JOB_NAME || "f1-telemetry-import";
@@ -59,49 +241,43 @@ export async function triggerCloudRunJob(jobId: string): Promise<string> {
     throw new Error("GCP_PROJECT_ID is required for cloud_run worker mode");
   }
 
-  const auth = getGoogleAuth();
-  const client = await auth.getClient();
-  const token = await client.getAccessToken();
-  if (!token.token) {
-    throw new Error("Failed to obtain GCP access token for Cloud Run Jobs");
-  }
+  const token = await getAccessToken();
 
   const parent = `projects/${project}/locations/${region}/jobs/${jobName}`;
   const url = `https://run.googleapis.com/v2/${parent}:run`;
 
-    const ingestSource = (
-      process.env.INGEST_SOURCE || "fastf1"
-    ).trim();
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token.token}`,
-        "Content-Type": "application/json",
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      overrides: {
+        containerOverrides: [
+          {
+            env: [
+              { name: "JOB_ID", value: jobId },
+              { name: "INGEST_SOURCE", value: ingestSource },
+            ],
+          },
+        ],
       },
-      body: JSON.stringify({
-        overrides: {
-          containerOverrides: [
-            {
-              env: [
-                { name: "JOB_ID", value: jobId },
-                // Cloud Run job image currently defaults to openf1; race-length
-                // car_data requests 422. Force FastF1 for API-triggered loads.
-                { name: "INGEST_SOURCE", value: ingestSource },
-              ],
-            },
-          ],
-        },
-      }),
-    });
+    }),
+  });
 
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Cloud Run Jobs execute failed (${res.status}): ${text}`);
   }
 
-  const data = (await res.json()) as { name?: string; metadata?: { name?: string } };
-  const executionName = data.name || data.metadata?.name || `${parent}/executions/unknown`;
+  const data = (await res.json()) as {
+    name?: string;
+    metadata?: { name?: string };
+    response?: { name?: string };
+  };
+  const executionName =
+    pickExecutionName(data) || `${parent}/executions/unknown`;
   await setCloudRunExecution(jobId, executionName);
   await appendJobLog(
     jobId,
@@ -139,7 +315,7 @@ async function runStubProgress(jobId: string) {
       `UPDATE jobs
        SET status = 'running', started_at = COALESCE(started_at, now()),
            status_message = 'Stub worker running', updated_at = now()
-       WHERE id = $1`,
+       WHERE id = $1 AND status IN ('queued', 'running')`,
       [jobId],
     );
 
@@ -149,24 +325,31 @@ async function runStubProgress(jobId: string) {
         [jobId],
       );
       const status = statusRes.rows[0]?.status as string | undefined;
-      if (status === "cancelling") {
-        await pool.query(
-          `UPDATE jobs
-           SET status = 'cancelled', finished_at = now(),
-               status_message = 'Cancelled', progress_pct = $2, updated_at = now()
-           WHERE id = $1`,
-          [jobId, progressForStep(step.key, params)],
-        );
-        await pool.query(
-          `UPDATE job_steps
-           SET status = 'cancelled', finished_at = now(), message = 'Cancelled'
-           WHERE job_id = $1 AND status IN ('pending', 'running')`,
-          [jobId],
-        );
-        await pool.query(
-          `INSERT INTO job_logs (job_id, level, message) VALUES ($1, 'warn', $2)`,
-          [jobId, "Stub worker cancelled"],
-        );
+      if (
+        status === "cancelling" ||
+        status === "cancelled" ||
+        status === "failed" ||
+        status === "succeeded"
+      ) {
+        if (status === "cancelling") {
+          await pool.query(
+            `UPDATE jobs
+             SET status = 'cancelled', finished_at = now(),
+                 status_message = 'Cancelled', progress_pct = $2, updated_at = now()
+             WHERE id = $1 AND status = 'cancelling'`,
+            [jobId, progressForStep(step.key, params)],
+          );
+          await pool.query(
+            `UPDATE job_steps
+             SET status = 'cancelled', finished_at = now(), message = 'Cancelled'
+             WHERE job_id = $1 AND status IN ('pending', 'running')`,
+            [jobId],
+          );
+          await pool.query(
+            `INSERT INTO job_logs (job_id, level, message) VALUES ($1, 'warn', $2)`,
+            [jobId, "Stub worker cancelled"],
+          );
+        }
         return;
       }
 
@@ -180,7 +363,7 @@ async function runStubProgress(jobId: string) {
         `UPDATE jobs
          SET current_step = $2, progress_pct = $3,
              status_message = $4, updated_at = now()
-         WHERE id = $1`,
+         WHERE id = $1 AND status IN ('queued', 'running')`,
         [
           jobId,
           step.key,
@@ -215,7 +398,7 @@ async function runStubProgress(jobId: string) {
        SET status = 'succeeded', finished_at = now(), progress_pct = 100,
            current_step = 'done', status_message = 'Stub import complete',
            updated_at = now()
-       WHERE id = $1`,
+       WHERE id = $1 AND status IN ('queued', 'running')`,
       [jobId],
     );
     await pool.query(
@@ -228,7 +411,7 @@ async function runStubProgress(jobId: string) {
       `UPDATE jobs
        SET status = 'failed', finished_at = now(), error = $2,
            status_message = 'Stub worker failed', updated_at = now()
-       WHERE id = $1`,
+       WHERE id = $1 AND status IN ('queued', 'running', 'cancelling')`,
       [jobId, message],
     );
     await pool.query(

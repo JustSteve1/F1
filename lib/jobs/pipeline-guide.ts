@@ -72,12 +72,12 @@ export const PIPELINE_GUIDE: Record<StepKey, PipelineGuideStep> = {
     key: "resample_telemetry",
     label: "Resample telemetry",
     notebookCell: "Cell 3",
-    short: "Nearest-neighbor resample to 10 Hz (0.1 s).",
+    short: "Nearest-neighbor resample (10 Hz warehouse / 2 Hz Kaggle), then checkpoint to GCS.",
     detail:
-      "For each lap, pick the closest FastF1 sample to every 0.1 s tick. Captures speed, throttle, brake, gear, RPM, DRS, XYZ, deceleration, and distance. Dedupes on season/session/driver/lap/lap_time_sec.",
+      "For each lap, pick the closest FastF1 sample to every tick. Warehouse jobs use 0.1 s (10 Hz). Kaggle jobs use 0.5 s (2 Hz) to match the published All Laps JSON. Captures speed, throttle, brake, gear, RPM, DRS, XYZ, deceleration, and distance. Dedupes on season/session/driver/lap/lap_time_sec. Writes Parquet to gs://f1-data-library-fastf1-cache/staging/{job_id}/ so a killed upload can skip this step on the same JOB_ID. Staging is deleted after a successful run.",
     writes: [],
     inputs: ["Per-lap FastF1 telemetry"],
-    outputs: ["telemetry_df (10 Hz points)", "Thin laps_df metadata"],
+    outputs: ["telemetry_df (10 Hz warehouse / 2 Hz Kaggle)", "Thin laps_df metadata"],
     sample: {
       columns: [
         "driver",
@@ -99,13 +99,35 @@ export const PIPELINE_GUIDE: Record<StepKey, PipelineGuideStep> = {
       ],
     },
   },
+  upload_kaggle_export: {
+    key: "upload_kaggle_export",
+    label: "Upload Kaggle export",
+    notebookCell: null,
+    short: "Write the 13-column for_kaggle_export table at 2 Hz.",
+    detail:
+      "Kaggle-only path. Builds one row per lap matching All Laps CSV columns (season, event, circuit, session, driver, numbers, lap_time, duration, compound, tyre_age, stint, telemetry JSON). Telemetry is the 2 Hz resample matching the published dataset. Deletes existing rows for this season/event/session, then bulk-loads. Does not write sessions, laps, or telemetry warehouse tables. telemetry is STRING so Parquet loads cannot hit BigQuery JSON rejection.",
+    writes: ["for_kaggle_export"],
+    inputs: ["Loaded sessions", "telemetry_df (2 Hz)"],
+    outputs: ["for_kaggle_export rows"],
+    sample: {
+      columns: [
+        "season",
+        "event_name",
+        "session_type",
+        "driver",
+        "lap_number",
+        "lap_time",
+      ],
+      rows: [[2026, "Italian Grand Prix", "R", "VER", 12, "1:21.234"]],
+    },
+  },
   upload_sessions_laps: {
     key: "upload_sessions_laps",
     label: "Upload sessions & laps",
     notebookCell: "Cell 4",
-    short: "Insert session and lap rows into BigQuery.",
+    short: "Insert session rows; bulk-load laps.",
     detail:
-      "session_key is derived from MD5(year-race-session) truncated to 8 hex digits. Sessions and lap metadata (sectors, compound, tyre age, stint) are inserted first so telemetry can join on session_key.",
+      "session_key is derived from MD5(year-race-session) truncated to 8 hex digits. Existing laps and telemetry for those session_keys are deleted first (replace, not append). Sessions are skipped if the session_key already exists. Laps are bulk-loaded via a BigQuery load job.",
     writes: ["sessions", "laps"],
     inputs: ["Loaded sessions", "laps_df"],
     outputs: ["sessions rows", "laps rows", "session_key"],
@@ -118,9 +140,9 @@ export const PIPELINE_GUIDE: Record<StepKey, PipelineGuideStep> = {
     key: "upload_telemetry",
     label: "Upload telemetry",
     notebookCell: "Cell 5",
-    short: "Batch-insert 10 Hz points into telemetry.",
+    short: "Bulk-load 10 Hz points into telemetry.",
     detail:
-      "Adds session_key/meeting_key and import timestamps, coerces NaN to null, and uploads in ~1000-row batches via insert_rows_json into f1_data_library_DS.telemetry.",
+      "Adds session_key/meeting_key and import timestamps, deletes any existing telemetry for those session_keys, then appends via a BigQuery load job (load_table_from_dataframe). Reads the in-memory frame or, if missing, the GCS resample checkpoint. On type failure, writes Parquet to gs://f1-data-library-fastf1-cache/staging/{job_id}/ and loads from URI. Job id and row count are logged to Postgres.",
     writes: ["telemetry"],
     inputs: ["Resampled telemetry_df"],
     outputs: ["telemetry rows in BigQuery"],
@@ -165,12 +187,12 @@ export const PIPELINE_GUIDE: Record<StepKey, PipelineGuideStep> = {
     key: "quality_checks",
     label: "Quality checks",
     notebookCell: "Cells 7–8",
-    short: "Enrich laps and flag data-quality exceptions.",
+    short: "Flag data-quality exceptions.",
     detail:
-      "Cell 7 re-extracts rich FastF1 lap fields (driver code, team, pits, speed traps, deleted flags) into laps. Cell 8 validates missing data, invalid lap times, telemetry gaps, and sequence holes, writing exceptions for review.",
-    writes: ["laps", "data_quality_exceptions"],
-    inputs: ["FastF1 laps", "telemetry", "laps"],
-    outputs: ["Enriched laps", "Exception report"],
+      "Warehouse jobs validate missing sectors, invalid lap times, telemetry gaps, and sequence holes on laps/telemetry. Kaggle jobs only inspect for_kaggle_export: missing driver or lap_number, null lap_duration, empty telemetry JSON. Exceptions still land in data_quality_exceptions.",
+    writes: ["data_quality_exceptions"],
+    inputs: ["for_kaggle_export or laps/telemetry"],
+    outputs: ["Exception report"],
     sample: {
       columns: [
         "severity",
@@ -216,18 +238,15 @@ export const PIPELINE_GUIDE: Record<StepKey, PipelineGuideStep> = {
     key: "kaggle_upload",
     label: "Kaggle upload",
     notebookCell: null,
-    short: "Optional export from BigQuery to a Kaggle dataset.",
+    short: "Publish for_kaggle_export as All Laps CSV.",
     detail:
-      "App-only step (not in the Colab notebook). When includeKaggle is set, the worker packages selected tables and pushes them to Kaggle for public/research use.",
+      "Downloads the current Kaggle dataset, replaces any lap keys that exist in for_kaggle_export (so noSkip re-imports refresh 2 Hz blobs), keeps historical CSV rows that were never imported via this table, and uploads a new dataset version. Does not join warehouse laps.",
     writes: [],
-    inputs: ["BigQuery dataset slices"],
+    inputs: ["for_kaggle_export", "Existing Kaggle CSV"],
     outputs: ["Kaggle dataset revision"],
     sample: {
       columns: ["artifact", "status"],
-      rows: [
-        ["telemetry.parquet", "uploaded"],
-        ["laps_unified.csv", "uploaded"],
-      ],
+      rows: [["All Laps - 10 September 2026.csv", "uploaded"]],
     },
   },
   done: {

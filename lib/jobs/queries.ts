@@ -196,10 +196,20 @@ export async function getJobDetail(
 }
 
 export async function requestCancel(id: string): Promise<JobRow | null> {
+  const existing = await getJob(id);
+  if (!existing) return null;
+  if (existing.status === "cancelling") {
+    await query(
+      `INSERT INTO job_logs (job_id, level, message) VALUES ($1, 'warn', $2)`,
+      [id, "Cancel re-requested from admin UI — retrying Cloud Run stop"],
+    );
+    return existing;
+  }
+
   const res = await query(
     `UPDATE jobs
      SET status = 'cancelling',
-         status_message = 'Cancel requested — worker will stop between steps',
+         status_message = 'Cancel requested — stopping Cloud Run execution',
          updated_at = now()
      WHERE id = $1 AND status IN ('queued', 'running')
      RETURNING *`,
@@ -210,6 +220,69 @@ export async function requestCancel(id: string): Promise<JobRow | null> {
   await query(
     `INSERT INTO job_logs (job_id, level, message) VALUES ($1, 'warn', $2)`,
     [id, "Cancel requested from admin UI"],
+  );
+  return mapJob(res.rows[0]);
+}
+
+export async function finalizeCancel(
+  id: string,
+  message = "Cancelled",
+): Promise<JobRow | null> {
+  const res = await query(
+    `UPDATE jobs
+     SET status = 'cancelled',
+         finished_at = COALESCE(finished_at, now()),
+         status_message = $2,
+         updated_at = now()
+     WHERE id = $1 AND status IN ('queued', 'running', 'cancelling')
+     RETURNING *`,
+    [id, message],
+  );
+  if (!res.rows[0]) return null;
+
+  await query(
+    `UPDATE job_steps
+     SET status = 'cancelled',
+         finished_at = COALESCE(finished_at, now()),
+         message = COALESCE(message, $2)
+     WHERE job_id = $1 AND status IN ('pending', 'running')`,
+    [id, message],
+  );
+  await query(
+    `INSERT INTO job_logs (job_id, level, message) VALUES ($1, 'warn', $2)`,
+    [id, message],
+  );
+  return mapJob(res.rows[0]);
+}
+
+export async function forceFailJob(
+  id: string,
+  reason: string,
+): Promise<JobRow | null> {
+  const res = await query(
+    `UPDATE jobs
+     SET status = 'failed',
+         finished_at = COALESCE(finished_at, now()),
+         error = $2,
+         status_message = $2,
+         updated_at = now()
+     WHERE id = $1 AND status IN ('queued', 'running', 'cancelling')
+     RETURNING *`,
+    [id, reason],
+  );
+  if (!res.rows[0]) return null;
+
+  await query(
+    `UPDATE job_steps
+     SET status = 'failed',
+         finished_at = COALESCE(finished_at, now()),
+         message = COALESCE(message, $2)
+     WHERE job_id = $1 AND status IN ('pending', 'running')`,
+    [id, reason],
+  );
+  await query(
+    `INSERT INTO job_logs (job_id, level, message) VALUES ($1, 'error', $2)`,
+    [id, reason],
   );
   return mapJob(res.rows[0]);
 }

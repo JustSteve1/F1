@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PipelineFlow } from "@/components/admin/pipeline/PipelineFlow";
+import { StubModeBanner } from "@/components/admin/jobs/WorkerModeBadge";
+import type { Fastf1CacheStatus } from "@/lib/jobs/fastf1-cache-types";
+import type { WorkerInfo } from "@/lib/jobs/worker-info";
 import type { SessionType } from "@/lib/jobs/steps";
 import type { CatalogEvent, ImportCatalog } from "@/lib/jobs/session-map";
 
@@ -23,6 +26,9 @@ export function CreateJobForm({ onCreated }: Props) {
   const [includeKaggle, setIncludeKaggle] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [cache, setCache] = useState<Fastf1CacheStatus | null>(null);
+  const [cacheLoading, setCacheLoading] = useState(false);
+  const [stub, setStub] = useState(false);
 
   const primaryYear = useMemo(() => {
     const first = years
@@ -73,6 +79,54 @@ export function CreateJobForm({ onCreated }: Props) {
     if (catalogYear === primaryYear && catalog) return;
     void loadCatalog(primaryYear);
   }, [primaryYear, catalogYear, catalog, loadCatalog]);
+
+  useEffect(() => {
+    if (primaryYear == null || !race) {
+      setCache(null);
+      setCacheLoading(false);
+      return;
+    }
+    const ac = new AbortController();
+    setCacheLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/admin/import/cache?year=${primaryYear}&race=${encodeURIComponent(race)}`,
+          { signal: ac.signal, cache: "no-store" },
+        );
+        const data = await res.json();
+        if (ac.signal.aborted) return;
+        if (!res.ok) {
+          setCache(null);
+          return;
+        }
+        setCache(data as Fastf1CacheStatus);
+      } catch (err) {
+        if (ac.signal.aborted) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setCache(null);
+      } finally {
+        if (!ac.signal.aborted) setCacheLoading(false);
+      }
+    })();
+    return () => ac.abort();
+  }, [primaryYear, race]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/worker", { cache: "no-store" });
+        const data = (await res.json()) as WorkerInfo;
+        if (!cancelled && res.ok) setStub(!!data.stub);
+      } catch {
+        if (!cancelled) setStub(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const eventSessionKey = selectedEvent
     ? `${selectedEvent.eventName}:${selectedEvent.sessions.map((s) => s.code).join(",")}`
@@ -150,6 +204,11 @@ export function CreateJobForm({ onCreated }: Props) {
     sessions.length > 0 &&
     primaryYear != null;
 
+  const cacheSessionCodes = useMemo(
+    () => new Set(cache?.sessionCodes ?? []),
+    [cache],
+  );
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -161,9 +220,12 @@ export function CreateJobForm({ onCreated }: Props) {
         </h2>
         <p className="mt-1 text-xs text-white/45">
           FastF1 schedule → BigQuery → optional Kaggle. Sessions are limited to
-          what exists for the selected event.
+          what exists for the selected event. Cloud Run needs a seeded GCS
+          cache; livetiming will not work from a datacenter IP.
         </p>
       </div>
+
+      <StubModeBanner />
 
       <div className="grid gap-4 md:grid-cols-2">
         <label className="block space-y-1.5">
@@ -225,6 +287,15 @@ export function CreateJobForm({ onCreated }: Props) {
         </p>
       )}
 
+      {race && primaryYear != null && (
+        <CacheBanner
+          year={primaryYear}
+          race={race}
+          cache={cache}
+          loading={cacheLoading}
+        />
+      )}
+
       <div className="space-y-2">
         <span className="text-[11px] font-bold uppercase tracking-widest text-white/50">
           Sessions
@@ -259,6 +330,13 @@ export function CreateJobForm({ onCreated }: Props) {
                       in BQ
                     </span>
                   ) : null}
+                  {cache?.readable &&
+                  cache.present &&
+                  !cacheSessionCodes.has(session.code) ? (
+                    <span className="ml-2 text-[10px] uppercase tracking-widest text-amber-400/90">
+                      no GCS
+                    </span>
+                  ) : null}
                 </button>
               );
             })}
@@ -268,7 +346,7 @@ export function CreateJobForm({ onCreated }: Props) {
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Toggle
-          label="No skip (re-import existing)"
+          label="No skip (replace session in BQ)"
           checked={noSkip}
           onChange={setNoSkip}
         />
@@ -288,6 +366,19 @@ export function CreateJobForm({ onCreated }: Props) {
           onChange={setIncludeKaggle}
         />
       </div>
+      {includeKaggle ? (
+        <p className="text-xs text-white/45">
+          Kaggle jobs write only{" "}
+          <code className="text-white/70">for_kaggle_export</code> (13 CSV
+          columns, 2 Hz telemetry JSON) and skip warehouse sessions/laps/telemetry
+          and laps_unified.
+        </p>
+      ) : (
+        <p className="text-xs text-white/45">
+          Warehouse jobs write sessions, laps, and 10 Hz telemetry. They do not
+          update Kaggle.
+        </p>
+      )}
 
       <div className="space-y-2 border border-white/10 px-3 py-3">
         <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">
@@ -319,7 +410,7 @@ export function CreateJobForm({ onCreated }: Props) {
         disabled={!canSubmit}
         className="inline-flex items-center justify-center bg-[#2596be] px-5 py-2.5 text-xs font-bold uppercase tracking-widest text-white transition hover:brightness-110 disabled:opacity-50"
       >
-        {submitting ? "Creating…" : "Create & run"}
+        {submitting ? "Creating…" : stub ? "Create stub run" : "Create & run"}
       </button>
     </form>
   );
@@ -344,5 +435,80 @@ function Toggle({
       />
       {label}
     </label>
+  );
+}
+
+function CacheBanner({
+  year,
+  race,
+  cache,
+  loading,
+}: {
+  year: number;
+  race: string;
+  cache: Fastf1CacheStatus | null;
+  loading: boolean;
+}) {
+  if (loading && !cache) {
+    return (
+      <p className="text-xs text-white/40 border border-white/10 px-3 py-2">
+        Checking FastF1 GCS cache…
+      </p>
+    );
+  }
+  if (!cache) {
+    return (
+      <p className="text-sm text-amber-300 border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+        Could not check FastF1 GCS cache for {year} {race}. Cloud Run still
+        needs a seeded folder. Use{" "}
+        <code className="text-[11px] text-amber-100">
+          gcloud storage rsync --recursive ~/.cache/fastf1
+          gs://f1-data-library-fastf1-cache/fastf1
+        </code>{" "}
+        from a home IP (not <code className="text-[11px]">gsutil -m rsync</code>{" "}
+        on macOS).
+      </p>
+    );
+  }
+  if (!cache.readable) {
+    return (
+      <p className="text-sm text-amber-300 border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+        {cache.error || "Could not list FastF1 GCS cache."} Grant{" "}
+        <code className="text-[11px] text-amber-100">
+          roles/storage.objectViewer
+        </code>{" "}
+        on the cache bucket to the trigger SA, then refresh. Seed from a
+        home/Mac IP with{" "}
+        <code className="text-[11px] text-amber-100">
+          gcloud storage rsync --recursive ~/.cache/fastf1
+          gs://f1-data-library-fastf1-cache/fastf1
+        </code>
+        . Do not use <code className="text-[11px]">gsutil -m rsync</code> on
+        macOS (sys.maxint).
+      </p>
+    );
+  }
+  if (!cache.present) {
+    const folders = cache.events.map((e) => e.folder).join(", ");
+    return (
+      <p className="text-sm text-amber-300 border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+        No FastF1 GCS cache for {year} {race}
+        {folders ? ` (found ${folders})` : ""}. Cloud Run cannot download
+        livetiming. Seed on a home/Mac IP, then run{" "}
+        <code className="text-[11px] text-amber-100">
+          gcloud storage rsync --recursive ~/.cache/fastf1
+          gs://f1-data-library-fastf1-cache/fastf1
+        </code>
+        . Do not use <code className="text-[11px]">gsutil -m rsync</code> on
+        macOS (sys.maxint).
+      </p>
+    );
+  }
+  const folder = cache.events.map((e) => e.folder).join(", ");
+  const codes = cache.sessionCodes.join(", ") || "session folders";
+  return (
+    <p className="text-xs text-emerald-300/80 border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+      GCS cache: {folder} · {codes}
+    </p>
   );
 }

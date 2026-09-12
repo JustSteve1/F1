@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { JobDetail } from "@/components/admin/jobs/JobDetail";
 import { JobList } from "@/components/admin/jobs/JobList";
+import { WorkerModeBadge } from "@/components/admin/jobs/WorkerModeBadge";
 import type { JobDetail as JobDetailType, JobRow } from "@/lib/jobs/types";
 
 export default function AdminJobDetailPage() {
@@ -54,6 +55,26 @@ export default function AdminJobDetailPage() {
     }
   }
 
+  async function handleFail() {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/jobs/${id}/fail`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason: "Force-failed from admin UI",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Force fail failed");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Force fail failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleRetry() {
     setBusy(true);
     try {
@@ -83,6 +104,7 @@ export default function AdminJobDetailPage() {
             </p>
           </div>
           <div className="flex items-center gap-4 text-xs">
+            <WorkerModeBadge />
             <Link
               href="/admin/pipeline"
               className="text-white/50 hover:text-white transition-colors"
@@ -121,9 +143,11 @@ export default function AdminJobDetailPage() {
               </div>
             ) : (
               <JobDetail
+                key={job.id}
                 job={job}
                 onCancel={handleCancel}
                 onRetry={handleRetry}
+                onFail={handleFail}
                 busy={busy}
               />
             )}

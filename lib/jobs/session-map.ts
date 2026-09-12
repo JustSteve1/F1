@@ -17,6 +17,26 @@ export function sessionCodeFromLabel(label: string | null | undefined): string |
   return SESSION_NAME_TO_CODE[key] ?? null;
 }
 
+/** FastF1 / GCS folder token for an event name, e.g. "Dutch Grand Prix" → "Dutch_Grand_Prix". */
+export function raceToken(race: string): string {
+  return race.trim().replace(/\s+/g, "_");
+}
+
+export function cacheFolderMatchesRace(folder: string, race: string): boolean {
+  const token = raceToken(race).toLowerCase();
+  if (!token) return false;
+  return folder.toLowerCase().includes(token);
+}
+
+/** Map a cache session folder like `2026-08-23_Practice_1` to FP1/Q/R/…. */
+export function sessionCodeFromCacheFolder(
+  folder: string,
+): string | null {
+  const name = folder.replace(/\/+$/, "").split("/").pop() ?? "";
+  const label = name.replace(/^\d{4}-\d{2}-\d{2}_/, "").replace(/_/g, " ");
+  return sessionCodeFromLabel(label);
+}
+
 export type CatalogSession = {
   code: string;
   label: string;

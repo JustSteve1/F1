@@ -6,8 +6,8 @@ Example (Monaco 2026 Qualifying + Race):
     python3 worker/pipeline/seed_fastf1_cache.py \
       --year 2026 --race "Monaco Grand Prix" --session Q R
 
-Or with gsutil after a local load:
-    gsutil -m rsync -r ~/.cache/fastf1 gs://f1-data-library-fastf1-cache/fastf1
+Or rsync after a local load (macOS: gcloud storage, not gsutil -m — sys.maxint):
+    gcloud storage rsync --recursive ~/.cache/fastf1 gs://f1-data-library-fastf1-cache/fastf1
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def main() -> int:
     if not uri:
         print(
             "FASTF1_CACHE_GCS_URI unset. Set it or run:\n"
-            f"  gsutil -m rsync -r {cache_dir} "
+            f"  gcloud storage rsync --recursive {cache_dir} "
             "gs://f1-data-library-fastf1-cache/fastf1",
             file=sys.stderr,
         )

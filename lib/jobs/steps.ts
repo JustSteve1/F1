@@ -2,13 +2,14 @@ export const PIPELINE_STEPS = [
   { key: "queued", label: "Queued", order: 0 },
   { key: "load_fastf1", label: "Load FastF1", order: 1 },
   { key: "resample_telemetry", label: "Resample telemetry", order: 2 },
-  { key: "upload_sessions_laps", label: "Upload sessions & laps", order: 3 },
-  { key: "upload_telemetry", label: "Upload telemetry", order: 4 },
-  { key: "verify", label: "Verify upload", order: 5 },
-  { key: "quality_checks", label: "Quality checks", order: 6 },
-  { key: "laps_unified", label: "Update laps_unified", order: 7 },
-  { key: "kaggle_upload", label: "Kaggle upload", order: 8 },
-  { key: "done", label: "Done", order: 9 },
+  { key: "upload_kaggle_export", label: "Upload Kaggle export", order: 3 },
+  { key: "upload_sessions_laps", label: "Upload sessions & laps", order: 4 },
+  { key: "upload_telemetry", label: "Upload telemetry", order: 5 },
+  { key: "verify", label: "Verify upload", order: 6 },
+  { key: "quality_checks", label: "Quality checks", order: 7 },
+  { key: "laps_unified", label: "Update laps_unified", order: 8 },
+  { key: "kaggle_upload", label: "Kaggle upload", order: 9 },
+  { key: "done", label: "Done", order: 10 },
 ] as const;
 
 export type StepKey = (typeof PIPELINE_STEPS)[number]["key"];
@@ -44,11 +45,24 @@ export type JobParams = {
   includeKaggle: boolean;
 };
 
+const WAREHOUSE_STEPS = new Set([
+  "upload_sessions_laps",
+  "upload_telemetry",
+  "verify",
+  "laps_unified",
+]);
+
+const KAGGLE_ONLY_STEPS = new Set(["upload_kaggle_export", "kaggle_upload"]);
+
 export function stepsForParams(params: JobParams) {
   return PIPELINE_STEPS.filter((step) => {
+    if (params.includeKaggle) {
+      if (WAREHOUSE_STEPS.has(step.key)) return false;
+    } else if (KAGGLE_ONLY_STEPS.has(step.key)) {
+      return false;
+    }
     if (step.key === "quality_checks" && params.skipQuality) return false;
     if (step.key === "laps_unified" && params.skipUnified) return false;
-    if (step.key === "kaggle_upload" && !params.includeKaggle) return false;
     return true;
   });
 }

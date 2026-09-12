@@ -2,7 +2,8 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    FASTF1_CACHE_DIR=/tmp/fastf1-cache
+    FASTF1_CACHE_DIR=/tmp/fastf1-cache \
+    INGEST_SOURCE=fastf1
 
 WORKDIR /app
 
