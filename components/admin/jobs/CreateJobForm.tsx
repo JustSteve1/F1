@@ -366,6 +366,19 @@ export function CreateJobForm({ onCreated }: Props) {
           onChange={setIncludeKaggle}
         />
       </div>
+      {includeKaggle ? (
+        <p className="text-xs text-white/45">
+          Kaggle jobs write only{" "}
+          <code className="text-white/70">for_kaggle_export</code> (13 CSV
+          columns, 2 Hz telemetry JSON) and skip warehouse sessions/laps/telemetry
+          and laps_unified.
+        </p>
+      ) : (
+        <p className="text-xs text-white/45">
+          Warehouse jobs write sessions, laps, and 10 Hz telemetry. They do not
+          update Kaggle.
+        </p>
+      )}
 
       <div className="space-y-2 border border-white/10 px-3 py-3">
         <p className="text-[10px] font-bold uppercase tracking-widest text-white/40">

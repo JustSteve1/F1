@@ -617,13 +617,15 @@ def resample_lap_telemetry(lap, interval_sec=TELEMETRY_INTERVAL):
         return []
 
 
-def extract_telemetry(loaded_sessions, log=print):
+def extract_telemetry(loaded_sessions, log=print, interval_sec=TELEMETRY_INTERVAL):
     all_telemetry = []
     all_laps = []
     _TELEM_LOAD_STATS["get_telemetry_ok"] = 0
     _TELEM_LOAD_STATS["car_data_fallback_ok"] = 0
     _TELEM_LOAD_STATS["failed"] = 0
     _TELEM_LOAD_STATS["failed_examples"] = []
+    hz = (1.0 / interval_sec) if interval_sec else 0.0
+    log(f"  Resample interval={interval_sec}s ({hz:g} Hz)")
 
     for (year, stype), session in loaded_sessions.items():
         event_name = session.event["EventName"]
@@ -632,7 +634,7 @@ def extract_telemetry(loaded_sessions, log=print):
         laps_with_points = 0
 
         for _, lap in session.laps.iterrows():
-            points = resample_lap_telemetry(lap)
+            points = resample_lap_telemetry(lap, interval_sec=interval_sec)
             if points:
                 laps_with_points += 1
             for p in points:
