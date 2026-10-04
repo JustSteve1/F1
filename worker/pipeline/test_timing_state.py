@@ -60,6 +60,33 @@ class TimingStateTests(unittest.TestCase):
         self.assertEqual(snap["session"]["name"], "Race")
         self.assertEqual(snap["clock"]["Remaining"], "01:00:00")
 
+    def test_segment_patch_keeps_sector_time(self) -> None:
+        state = timing_state.new_state()
+        timing_state.apply_message(
+            state,
+            "TimingData",
+            {
+                "Lines": {
+                    "1": {
+                        "Sectors": [
+                            {"Value": "28.1"},
+                            {"Value": "39.4"},
+                            {"Value": "24.6"},
+                        ]
+                    }
+                }
+            },
+        )
+        timing_state.apply_message(
+            state,
+            "TimingData",
+            {"Lines": {"1": {"Sectors": {"0": {"Segments": {"1": {"Status": 2048}}}}}}},
+        )
+        row = timing_state.snapshot(state)["drivers"][0]
+        self.assertEqual(row["sector1"], "28.1")
+        self.assertEqual(row["sector2"], "39.4")
+        self.assertEqual(row["sector3"], "24.6")
+
     def test_replay_jsonl_matches_live_merge(self) -> None:
         messages = [
             (

@@ -176,6 +176,11 @@ class LiveSubscriber:
         self._lock = threading.Lock()
         self._connected = threading.Event()
         self._connection = None
+        self._error: str | None = None
+
+    def _on_error(self, message: Any) -> None:
+        self._error = str(message)
+        print(f"SignalR error: {message}", file=sys.stderr)
 
     def _handle(self, message: Any) -> None:
         items = iter_feed_items(message)
@@ -192,11 +197,14 @@ class LiveSubscriber:
 
     def _negotiate_headers(self) -> dict[str, str]:
         headers = {"User-Agent": USER_AGENT}
+        # OPTIONS is 405 on the current hub, but the response still sets the
+        # load-balancer cookie SignalR needs before the websocket opens.
         response = requests.options(NEGOTIATE_URL, headers=headers, timeout=20)
-        response.raise_for_status()
         cookie = response.cookies.get("AWSALBCORS")
         if cookie:
             headers["Cookie"] = f"AWSALBCORS={cookie}"
+        elif response.status_code >= 400:
+            response.raise_for_status()
         else:
             print(
                 "Negotiate did not return AWSALBCORS; connecting without it.",
@@ -219,11 +227,13 @@ class LiveSubscriber:
         )
         connection.on_open(lambda: self._connected.set())
         connection.on_close(lambda: self._connected.clear())
+        connection.on_error(self._on_error)
         connection.on("feed", self._handle)
         self._connection = connection
         connection.start()
         if not self._connected.wait(timeout=20):
-            raise RuntimeError("SignalR connection was not established within 20s.")
+            detail = f" Last error: {self._error}" if self._error else ""
+            raise RuntimeError("SignalR connection was not established within 20s." + detail)
         connection.send("Subscribe", [TIMING_TOPICS], on_invocation=self._handle)
 
     def stop(self) -> None:

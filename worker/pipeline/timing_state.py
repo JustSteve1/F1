@@ -24,17 +24,52 @@ def new_state() -> dict[str, Any]:
     }
 
 
+def _numeric_keys(value: dict) -> bool:
+    return bool(value) and all(str(key).isdigit() for key in value)
+
+
 def deep_merge(base: Any, patch: Any) -> Any:
-    """Merge dict patches. Any non-dict patch replaces the previous value."""
-    if not isinstance(base, dict) or not isinstance(patch, dict):
-        return patch
-    merged = dict(base)
-    for key, value in patch.items():
-        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
-            merged[key] = deep_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
+    """Merge dict and indexed-list patches.
+
+    Livetiming sends a sector list with lap times, then later sends a dict
+    such as {"0": {"Segments": ...}}. Those have to combine, or the time is
+    replaced by the segment patch.
+    """
+    if isinstance(base, dict) and isinstance(patch, dict):
+        merged = dict(base)
+        for key, value in patch.items():
+            if key in merged:
+                merged[key] = deep_merge(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+
+    if isinstance(base, list) and isinstance(patch, list):
+        merged = list(base)
+        for index, value in enumerate(patch):
+            if index < len(merged):
+                merged[index] = deep_merge(merged[index], value)
+            else:
+                merged.append(value)
+        return merged
+
+    if isinstance(base, list) and isinstance(patch, dict) and _numeric_keys(patch):
+        merged = list(base)
+        for key, value in patch.items():
+            index = int(key)
+            while len(merged) <= index:
+                merged.append({})
+            merged[index] = deep_merge(merged[index], value)
+        return merged
+
+    if isinstance(base, dict) and isinstance(patch, list) and _numeric_keys(base):
+        merged = dict(base)
+        for index, value in enumerate(patch):
+            key = str(index)
+            merged[key] = deep_merge(merged.get(key), value)
+        return merged
+
+    return patch
 
 
 def _value_of(node: Any) -> Any:

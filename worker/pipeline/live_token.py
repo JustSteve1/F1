@@ -29,6 +29,9 @@ COOKIE_URLS = [
     "https://account.formula1.com/",
     "https://formula1.com/",
 ]
+# FastF1's auth handoff calls the decoded value loginSession. Chrome stores
+# the same cookie as login-session.
+LOGIN_COOKIE_NAMES = ("login-session", "loginSession")
 
 
 def token_path() -> Path:
@@ -109,9 +112,10 @@ def read_login_session(devtools_url: str = DEVTOOLS_URL) -> str:
     finally:
         ws.close()
 
-    for cookie in cookies:
-        if cookie.get("name") == "loginSession" and cookie.get("value"):
-            return cookie["value"]
+    for name in LOGIN_COOKIE_NAMES:
+        for cookie in cookies:
+            if cookie.get("name") == name and cookie.get("value"):
+                return cookie["value"]
 
     names = ", ".join(
         sorted({cookie.get("name", "") for cookie in cookies if cookie.get("name")})
