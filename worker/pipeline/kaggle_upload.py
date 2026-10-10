@@ -1,9 +1,9 @@
 """
 Kaggle Upload — F1 lap data from BigQuery → Kaggle dataset
 
-Pulls all laps + telemetry from BigQuery, deduplicates against the current
-Kaggle CSV, appends only new rows, and uploads a single cumulative file as
-a new dataset version.
+Pulls laps from the laps_kaggle view, replaces matching Kaggle rows with
+that view, keeps rows that exist only on Kaggle, and uploads one cumulative
+file as a new dataset version.
 
 Usage:
     python kaggle_upload.py
@@ -29,6 +29,8 @@ import kagglehub
 import pandas as pd
 from google.cloud import bigquery
 from kaggle.api.kaggle_api_extended import KaggleApi
+
+import kaggle_merge
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -111,33 +113,36 @@ def download_current_kaggle_data(api: KaggleApi) -> pd.DataFrame:
 # ── Step 2: Query BigQuery for all laps ───────────────────────────────────────
 
 def fetch_bq_laps(client: bigquery.Client) -> pd.DataFrame:
-    """Fetch lap-level data from BigQuery, joining laps + sessions for circuit name."""
-    print("  Querying BigQuery laps…")
-    query = f"""
-        SELECT
-            l.season,
-            s.event_name,
-            COALESCE(s.circuit, s.event_name) AS circuit,
-            s.session_type,
-            l.driver_code                     AS driver,
-            CAST(l.driver_number AS INT64)    AS driver_number,
-            CAST(l.lap_number    AS INT64)    AS lap_number,
-            l.lap_duration,
-            l.compound,
-            l.tyre_age_laps                   AS tyre_age,
-            l.stint_number,
-            l.session_key
-        FROM `{PROJECT}.{DATASET}.laps` l
-        JOIN (
-            SELECT DISTINCT session_key, event_name, circuit, session_type
-            FROM `{PROJECT}.{DATASET}.sessions`
-        ) s ON l.session_key = s.session_key
-        WHERE l.driver_code IS NOT NULL
-          AND l.lap_number  IS NOT NULL
+    """Fetch the Kaggle-shaped laps_kaggle view.
+
+    The view unions laps_live with the batch laps table. The batch row wins
+    when both tables have the same lap.
     """
+    print("  Querying BigQuery laps_kaggle…")
+    columns = ", ".join(kaggle_merge.KAGGLE_COLUMNS)
+    query = f"SELECT {columns} FROM `{PROJECT}.{DATASET}.laps_kaggle`"
     df = client.query(query).to_dataframe()
     print(f"  ✅  {len(df):,} laps fetched from BigQuery")
     return df
+
+
+def _records(df: pd.DataFrame | None) -> list[dict]:
+    if df is None or df.empty:
+        return []
+    return df.to_dict("records")
+
+
+def combine_kaggle_export(existing_df: pd.DataFrame, view_df: pd.DataFrame) -> pd.DataFrame:
+    """Replace Kaggle rows with the view. Keep Kaggle rows the view does not have."""
+    rows = kaggle_merge.combine_kaggle_rows(_records(existing_df), _records(view_df))
+    columns = list(kaggle_merge.KAGGLE_COLUMNS)
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows)[columns]
+
+
+def export_unchanged(existing_df: pd.DataFrame, combined_df: pd.DataFrame) -> bool:
+    return kaggle_merge.rows_unchanged(_records(existing_df), _records(combined_df))
 
 
 # ── Step 3: Find new rows ─────────────────────────────────────────────────────
@@ -334,42 +339,20 @@ def main():
     print("── Step 1: Download existing Kaggle data…")
     existing_df = download_current_kaggle_data(api)
 
-    # Step 2: Fetch all laps from BigQuery
+    # Step 2: Fetch the Kaggle view. Batch laps win over laps_live inside the view.
     print("\n── Step 2: Fetch laps from BigQuery…")
-    bq_laps = fetch_bq_laps(bq)
+    view_df = fetch_bq_laps(bq)
 
-    if bq_laps.empty:
+    if view_df.empty and existing_df.empty:
         print("  No laps in BigQuery. Nothing to upload.")
         return
 
-    # Step 3: Find new rows
-    print("\n── Step 3: Identify new laps…")
-    new_laps = find_new_laps(bq_laps, existing_df)
-
-    if new_laps.empty:
+    # Step 3: View rows replace the same lap already on Kaggle.
+    print("\n── Step 3: Merge with the current Kaggle file…")
+    combined = combine_kaggle_export(existing_df, view_df)
+    if export_unchanged(existing_df, combined):
         print("  Nothing new to upload. Kaggle dataset is already up to date.")
         return
-
-    # Step 4: Fetch telemetry for new laps
-    print("\n── Step 4: Fetch telemetry for new laps…")
-    telemetry_df = fetch_telemetry_for_laps(bq, new_laps)
-
-    # Step 5: Build Kaggle-format rows
-    print("\n── Step 5: Build Kaggle rows…")
-    new_kaggle_rows = build_kaggle_rows(new_laps, telemetry_df)
-    print(f"  ✅  {len(new_kaggle_rows):,} rows built")
-
-    # Combine with existing
-    if existing_df.empty:
-        combined = new_kaggle_rows
-    else:
-        # Keep only the Kaggle-schema columns from existing
-        existing_trimmed = existing_df[new_kaggle_rows.columns.intersection(existing_df.columns)]
-        combined = pd.concat([existing_trimmed, new_kaggle_rows], ignore_index=True)
-
-    combined = combined.drop_duplicates(
-        subset=["season", "event_name", "session_type", "driver_number", "lap_number"]
-    ).sort_values(["season", "event_name", "session_type", "driver_number", "lap_number"])
 
     print(f"  ✅  Total rows for upload: {len(combined):,}")
 
