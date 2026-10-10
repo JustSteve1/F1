@@ -23,6 +23,7 @@ from signalrcore.hub_connection_builder import HubConnectionBuilder
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import live_laps  # noqa: E402
 import live_token  # noqa: E402
 import timing_state  # noqa: E402
 
@@ -171,6 +172,7 @@ class LiveSubscriber:
     def __init__(self, token: str, directory: Path):
         self._token = token
         self.archive = JsonlArchive(directory)
+        self.laps = live_laps.LapLog(directory)
         self.state = timing_state.new_state()
         self.rates = TopicRates()
         self._lock = threading.Lock()
@@ -190,8 +192,11 @@ class LiveSubscriber:
             self.archive.append(topic, payload)
             self.rates.add(topic)
             with self._lock:
+                completed = timing_state.completed_lap_rows(self.state, topic, payload)
                 timing_state.apply_message(self.state, topic, payload)
                 snap = timing_state.snapshot(self.state) if topic in SNAPSHOT_TOPICS else None
+            if completed:
+                self.laps.add(completed)
             if snap is not None:
                 self.archive.write_snapshot(snap)
 
@@ -246,9 +251,13 @@ def run_replay(path: Path) -> int:
     snap = timing_state.replay_jsonl(path)
     destination = path.parent / "timing-snapshot.json"
     destination.write_text(json.dumps(snap, indent=2, default=str))
+    laps = timing_state.replay_laps(path)
+    laps_path = path.parent / "live-laps.json"
+    laps_path.write_text(json.dumps({"laps": laps}, indent=2, default=str))
     print(f"Replayed {path}")
     print(f"Snapshot: {destination}")
     print(f"Drivers: {len(snap['drivers'])}")
+    print(f"Completed laps: {len(laps)} -> {laps_path}")
     session = snap.get("session") or {}
     print(f"Session: {session.get('meeting') or session.get('name') or '(none)'}")
     return 0
@@ -264,6 +273,11 @@ def run_live(seconds: int | None, directory: Path) -> int:
     subscriber.connect()
     print(f"Subscribed. Archive: {subscriber.archive.path}")
     print(f"Snapshot: {subscriber.archive.snapshot_path}")
+    print(f"Laps: {subscriber.laps.path}")
+    if subscriber.laps.bigquery_ready:
+        print(f"BigQuery: {live_laps.table_id()}")
+    else:
+        print(f"BigQuery: not writing ({subscriber.laps.bigquery_error})")
     started = time.monotonic()
     try:
         while True:

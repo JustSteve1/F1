@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 type DriverRow = {
   driver_number: string;
@@ -142,6 +143,12 @@ export function LiveTimingBoard() {
           <p className="mt-1 font-mono text-xs uppercase tracking-widest text-white/45">
             {[session?.name, session?.type].filter(Boolean).join(" · ") || "Waiting for a session"}
           </p>
+          <Link
+            href="/live/laps"
+            className="mt-2 inline-block font-mono text-[11px] uppercase tracking-widest text-white/50 hover:text-white"
+          >
+            Completed laps
+          </Link>
         </div>
 
         <div className="flex flex-wrap gap-2">

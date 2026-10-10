@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Home, User, Settings, Factory, Monitor, BookOpen, ListTodo } from "lucide-react";
+import { Home, User, Settings, Factory, Monitor, BookOpen, ListTodo, Rows3 } from "lucide-react";
 
 export function Sidebar() {
     return (
@@ -36,6 +36,13 @@ export function Sidebar() {
                     >
                         <Monitor className="h-5 w-5" />
                         <span className="sr-only">Live timing</span>
+                    </Link>
+                    <Link
+                        href="/live/laps"
+                        className="flex h-10 w-10 items-center justify-center rounded-sm text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+                    >
+                        <Rows3 className="h-5 w-5" />
+                        <span className="sr-only">Completed laps</span>
                     </Link>
                     <Link
                         href="/frontend/userpaddock"

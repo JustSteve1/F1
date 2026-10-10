@@ -2,7 +2,7 @@
 
 Interval.ai already describes a live Formula 1 sync. The pitwall screen is still mock UI. The only real ingest today is the one-shot FastF1 job. This note is the source comparison, the timing topics, the one-source rule, and the hosting rule for the live path.
 
-The first slice is a spike: a subscriber that records the official timing hub and merges `TimingData` on a non-GCP host. It does not write BigQuery, it does not change the jobs admin, and it does not replace the pitwall.
+The subscriber records the official timing hub and merges `TimingData` on a non-GCP host. Each newly completed lap is appended to `laps_live`, a BigQuery table with the same columns as `laps`. The batch job still owns `laps` and `laps_unified`. The jobs admin and the pitwall are unchanged.
 
 ## What each source can do
 
@@ -55,7 +55,7 @@ A session captured live is not imported again through FastF1.
 - After the session, prefer F1's own `StreamPath` files once `Index.json` sets `Path`.
 - Use FastF1 only to backfill sessions that were not captured live.
 
-BigQuery (`sessions`, `laps`, `telemetry`, `laps_unified`) is filled after the session from that recording. This spike does not write those tables. The jobs admin stays the control plane later: a job is either "record this live session" or "parse an official archive."
+BigQuery (`sessions`, `laps`, `telemetry`, `laps_unified`) stays the batch path. Live finishes go only to `laps_live`, which is created `LIKE laps`, so the two tables can be combined in a view later. The jobs admin stays the control plane for archive imports: a session captured live is not imported again through FastF1.
 
 ## Hosting
 
@@ -70,6 +70,7 @@ The subscriber refuses to start a live connection when `K_SERVICE` or `CLOUD_RUN
 | Bearer file | `worker/pipeline/live_token.py` writes `~/.config/interval/f1-subscription-token` (mode 600). Override with `F1_SUBSCRIPTION_TOKEN_FILE`. |
 | Subscriber | `worker/pipeline/live_subscriber.py` negotiates SignalR Core, subscribes to the topics above, and appends every message to `~/.local/share/interval/live/<timestamp>-live.jsonl`. |
 | Merged state | `worker/pipeline/timing_state.py` deep-merges `TimingData` and writes `timing-snapshot.json` in that same directory. |
-| Replay | `python worker/pipeline/live_subscriber.py --replay <file.jsonl>` rebuilds the snapshot offline. |
+| Replay | `python worker/pipeline/live_subscriber.py --replay <file.jsonl>` rebuilds the snapshot and `live-laps.json` offline. |
+| Completed laps | `worker/pipeline/live_laps.py` appends each finished lap to `live-laps.json` and inserts it into `f1-data-library.f1_data_library_DS.laps_live`. `/live/laps` lists that file, newest first. |
 
-Raw frames in this spike stay on local disk. A GCS archive, under a prefix separate from the FastF1 cache, is the later home for those frames. The Next.js pitwall, SSE fan-out, and BigQuery load are the following slice, after a live or replay session has produced a merged snapshot.
+Raw frames stay on local disk. A GCS archive, under a prefix separate from the FastF1 cache, is the later home for those frames. The pitwall and SSE fan-out are still the following slice.
