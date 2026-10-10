@@ -1,5 +1,7 @@
 -- Kaggle lap export. One row per lap.
 -- laps wins over laps_live when both have the same lap.
+-- Batch laps read the FastF1 telemetry table.
+-- Live laps read telemetry_live only, written by the livetiming subscriber.
 -- Columns match the Kaggle "All Laps" file. No source column.
 
 CREATE OR REPLACE VIEW `f1-data-library.f1_data_library_DS.laps_kaggle` AS
@@ -32,6 +34,34 @@ telemetry_json AS (
       )
     ) AS telemetry
   FROM `f1-data-library.f1_data_library_DS.telemetry`
+  WHERE MOD(CAST(ROUND(lap_time_sec * 10) AS INT64), 5) = 0
+  GROUP BY session_key, driver_number, lap_number
+),
+live_telemetry_json AS (
+  SELECT
+    session_key,
+    SAFE_CAST(driver_number AS INT64) AS driver_number,
+    SAFE_CAST(lap_number AS INT64) AS lap_number,
+    TO_JSON_STRING(
+      ARRAY_AGG(
+        JSON_STRIP_NULLS(
+          JSON_OBJECT(
+            't', ROUND(lap_time_sec, 1),
+            'speed', SAFE_CAST(ROUND(speed) AS INT64),
+            'throttle', SAFE_CAST(ROUND(throttle) AS INT64),
+            'brake', IF(brake, 1, 0),
+            'gear', gear,
+            'rpm', SAFE_CAST(ROUND(rpm) AS INT64),
+            'drs', SAFE_CAST(drs AS INT64),
+            'x', ROUND(x, 1),
+            'y', ROUND(y, 1),
+            'z', ROUND(z, 1)
+          )
+        )
+        ORDER BY lap_time_sec
+      )
+    ) AS telemetry
+  FROM `f1-data-library.f1_data_library_DS.telemetry_live`
   WHERE MOD(CAST(ROUND(lap_time_sec * 10) AS INT64), 5) = 0
   GROUP BY session_key, driver_number, lap_number
 ),
@@ -82,7 +112,7 @@ live_laps AS (
   WHERE SAFE_CAST(l.lap_number AS INT64) IS NOT NULL
 ),
 chosen AS (
-  SELECT * EXCEPT (source_rank)
+  SELECT *
   FROM (
     SELECT * FROM batch_laps
     UNION ALL
@@ -118,9 +148,15 @@ SELECT
   c.compound,
   c.tyre_age,
   c.stint_number,
-  IFNULL(t.telemetry, '[]') AS telemetry
+  IFNULL(COALESCE(t.telemetry, lt.telemetry), '[]') AS telemetry
 FROM chosen AS c
 LEFT JOIN telemetry_json AS t
-  ON c.session_key = t.session_key
+  ON c.source_rank = 1
+ AND c.session_key = t.session_key
  AND c.driver_number = t.driver_number
  AND c.lap_number = t.lap_number
+LEFT JOIN live_telemetry_json AS lt
+  ON c.source_rank = 2
+ AND c.session_key = lt.session_key
+ AND c.driver_number = lt.driver_number
+ AND c.lap_number = lt.lap_number

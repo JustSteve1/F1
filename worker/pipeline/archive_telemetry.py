@@ -255,13 +255,95 @@ def _number(value: Any) -> float | None:
         return None
 
 
+def decode_feed_payload(payload: Any) -> Any | None:
+    """Inflate a live or archive car packet. Dicts pass through."""
+    if isinstance(payload, dict):
+        return payload
+    if not isinstance(payload, str):
+        return None
+    text = payload.strip().strip('"')
+    if not text:
+        return None
+    if text.startswith("{"):
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    try:
+        return _raw_inflate(text)
+    except Exception:
+        return None
+
+
+def car_samples_from_payload(payload: Any) -> list[tuple[str, datetime, dict[str, Any]]]:
+    """(driver, utc, channels) from one CarData.z packet."""
+    decoded = decode_feed_payload(payload)
+    if not isinstance(decoded, dict):
+        return []
+    samples: list[tuple[str, datetime, dict[str, Any]]] = []
+    for entry in decoded.get("Entries") or []:
+        utc_text = entry.get("Utc") if isinstance(entry, dict) else None
+        cars = entry.get("Cars") if isinstance(entry, dict) else None
+        if not utc_text or not isinstance(cars, dict):
+            continue
+        instant = _parse_utc(utc_text)
+        for number, body in cars.items():
+            channels = body.get("Channels") if isinstance(body, dict) else None
+            if not isinstance(channels, dict):
+                continue
+            throttle = _cap_pedal(channels.get("4"))
+            brake_pedal = _cap_pedal(channels.get("5"))
+            samples.append(
+                (
+                    str(number),
+                    instant,
+                    {
+                        "rpm": channels.get("0"),
+                        "speed": channels.get("2"),
+                        "gear": channels.get("3"),
+                        "throttle": throttle,
+                        "brake": bool(brake_pedal) if brake_pedal is not None else None,
+                    },
+                )
+            )
+    return samples
+
+
+def position_samples_from_payload(payload: Any) -> list[tuple[str, datetime, dict[str, float]]]:
+    """(driver, utc, xyz metres) from one Position.z packet."""
+    decoded = decode_feed_payload(payload)
+    if not isinstance(decoded, dict):
+        return []
+    samples: list[tuple[str, datetime, dict[str, float]]] = []
+    for entry in decoded.get("Position") or []:
+        utc_text = entry.get("Timestamp") if isinstance(entry, dict) else None
+        entries = entry.get("Entries") if isinstance(entry, dict) else None
+        if not utc_text or not isinstance(entries, dict):
+            continue
+        instant = _parse_utc(utc_text)
+        for number, body in entries.items():
+            if not isinstance(body, dict):
+                continue
+            try:
+                point = {
+                    "x": float(body["X"]) / 10.0,
+                    "y": float(body["Y"]) / 10.0,
+                    "z": float(body["Z"]) / 10.0,
+                }
+            except (KeyError, TypeError, ValueError):
+                continue
+            samples.append((str(number), instant, point))
+    return samples
+
+
 def sample_lap(
     window: dict[str, Any],
     cars: list[tuple[datetime, dict[str, Any]]],
     positions: list[tuple[datetime, dict[str, float]]],
     interval: float = SAMPLE_SEC,
+    tolerance: float = NEAREST_TOLERANCE_SEC,
 ) -> list[dict[str, Any]]:
-    """Nearest car and position sample on a 0.5s grid from the lap start."""
+    """Nearest car and position sample on a fixed grid from the lap start."""
     start = window["start"]
     end = window["end"]
     duration = (end - start).total_seconds()
@@ -274,8 +356,8 @@ def sample_lap(
         if t - duration > 1e-6:
             break
         instant = start + timedelta(seconds=t)
-        car = _nearest(cars, instant, NEAREST_TOLERANCE_SEC) or {}
-        pos = _nearest(positions, instant, NEAREST_TOLERANCE_SEC) or {}
+        car = _nearest(cars, instant, tolerance) or {}
+        pos = _nearest(positions, instant, tolerance) or {}
         speed = _number(car.get("speed"))
         if speed is None and not pos:
             step += 1

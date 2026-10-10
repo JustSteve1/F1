@@ -43,7 +43,7 @@ The first slice is the timing board. These topics are the real-time time sync: g
 - `LapCount`
 - `ExtrapolatedClock`
 
-`CarData.z` and `Position.z` stay behind an F1 TV token taken from a real browser login. F1 blocks headless username and password. That later slice is what would feed the 10 Hz telemetry the warehouse already resamples at 0.1 s.
+`CarData.z` and `Position.z` are on the same hub and need the F1 TV bearer. The subscriber listens to both. When a lap finishes it resamples the buffer to 10 Hz and writes `telemetry_live`. The Kaggle view reads that table for a live lap. A batch lap still reads the FastF1 `telemetry` table.
 
 The spike stores the subscription JWT from the signed-in browser (`login-session` cookie, `data.subscriptionToken`) outside the repo and sends it as the SignalR bearer. Negotiate-only, with no bearer, is not the path this spike uses.
 
