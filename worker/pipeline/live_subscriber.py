@@ -1,6 +1,7 @@
 """Subscribe to Formula 1 livetiming SignalR Core.
 
 Records every feed message as JSONL and keeps a merged timing snapshot.
+CarData.z and Position.z are resampled to 10 Hz when a lap finishes.
 Does not import FastF1 and does not call OpenF1.
 """
 
@@ -24,6 +25,7 @@ from signalrcore.hub_connection_builder import HubConnectionBuilder
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import live_laps  # noqa: E402
+import live_telemetry  # noqa: E402
 import live_token  # noqa: E402
 import timing_state  # noqa: E402
 
@@ -48,6 +50,13 @@ TIMING_TOPICS = [
     "LapCount",
     "ExtrapolatedClock",
 ]
+
+CAR_TOPICS = (
+    "CarData.z",
+    "Position.z",
+)
+
+SUBSCRIBE_TOPICS = [*TIMING_TOPICS, *CAR_TOPICS]
 
 SNAPSHOT_TOPICS = {
     "TimingData",
@@ -97,7 +106,7 @@ def iter_feed_items(message: Any) -> list[tuple[str, Any]]:
         arguments = message.get("A")
         if isinstance(arguments, list):
             return iter_feed_items(arguments)
-        known = [(key, value) for key, value in message.items() if key in TIMING_TOPICS]
+        known = [(key, value) for key, value in message.items() if key in SUBSCRIBE_TOPICS]
         if known:
             return known
     return []
@@ -145,7 +154,7 @@ class TopicRates:
 
     def report(self) -> list[str]:
         lines = []
-        topics = list(TIMING_TOPICS)
+        topics = list(SUBSCRIBE_TOPICS)
         for extra in self._times:
             if extra not in topics:
                 topics.append(extra)
@@ -173,6 +182,8 @@ class LiveSubscriber:
         self._token = token
         self.archive = JsonlArchive(directory)
         self.laps = live_laps.LapLog(directory)
+        self.cars = live_telemetry.CarBuffer()
+        self.telemetry = live_telemetry.LiveTelemetryLog()
         self.state = timing_state.new_state()
         self.rates = TopicRates()
         self._lock = threading.Lock()
@@ -191,12 +202,16 @@ class LiveSubscriber:
         for topic, payload in items:
             self.archive.append(topic, payload)
             self.rates.add(topic)
+            if topic in CAR_TOPICS:
+                self.cars.add(topic, payload)
+                continue
             with self._lock:
                 completed = timing_state.completed_lap_rows(self.state, topic, payload)
                 timing_state.apply_message(self.state, topic, payload)
                 snap = timing_state.snapshot(self.state) if topic in SNAPSHOT_TOPICS else None
             if completed:
                 self.laps.add(completed)
+                self.telemetry.record(completed, self.cars, datetime.now(timezone.utc))
             if snap is not None:
                 self.archive.write_snapshot(snap)
 
@@ -239,7 +254,7 @@ class LiveSubscriber:
         if not self._connected.wait(timeout=20):
             detail = f" Last error: {self._error}" if self._error else ""
             raise RuntimeError("SignalR connection was not established within 20s." + detail)
-        connection.send("Subscribe", [TIMING_TOPICS], on_invocation=self._handle)
+        connection.send("Subscribe", [SUBSCRIBE_TOPICS], on_invocation=self._handle)
 
     def stop(self) -> None:
         if self._connection is not None:
@@ -275,9 +290,13 @@ def run_live(seconds: int | None, directory: Path) -> int:
     print(f"Snapshot: {subscriber.archive.snapshot_path}")
     print(f"Laps: {subscriber.laps.path}")
     if subscriber.laps.bigquery_ready:
-        print(f"BigQuery: {live_laps.table_id()}")
+        print(f"BigQuery laps: {live_laps.table_id()}")
     else:
-        print(f"BigQuery: not writing ({subscriber.laps.bigquery_error})")
+        print(f"BigQuery laps: not writing ({subscriber.laps.bigquery_error})")
+    if subscriber.telemetry.bigquery_ready:
+        print(f"BigQuery telemetry: {live_telemetry.table_id()} at 10 Hz")
+    else:
+        print(f"BigQuery telemetry: not writing ({subscriber.telemetry.bigquery_error})")
     started = time.monotonic()
     try:
         while True:
