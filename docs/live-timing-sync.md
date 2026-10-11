@@ -42,8 +42,10 @@ The first slice is the timing board. These topics are the real-time time sync: g
 - `RaceControlMessages`
 - `LapCount`
 - `ExtrapolatedClock`
+- `CarData.z`
+- `Position.z`
 
-`CarData.z` and `Position.z` stay behind an F1 TV token taken from a real browser login. F1 blocks headless username and password. That later slice is what would feed the 10 Hz telemetry the warehouse already resamples at 0.1 s.
+`CarData.z` and `Position.z` need the F1 TV bearer. The subscriber inflates each frame and writes one `telemetry_live` row per driver every 0.5 s, with speed, throttle, brake, gear, rpm, drs, and x, y, z together. The lap in progress is `NumberOfLaps + 1`, so the sample joins the lap row that is written when that lap finishes.
 
 The spike stores the subscription JWT from the signed-in browser (`login-session` cookie, `data.subscriptionToken`) outside the repo and sends it as the SignalR bearer. Negotiate-only, with no bearer, is not the path this spike uses.
 
@@ -80,5 +82,6 @@ The subscriber refuses to start a live connection when `K_SERVICE` or `CLOUD_RUN
 | Merged state | `worker/pipeline/timing_state.py` deep-merges `TimingData` and writes `timing-snapshot.json` in that same directory. |
 | Replay | `python worker/pipeline/live_subscriber.py --replay <file.jsonl>` rebuilds the snapshot and `live-laps.json` offline. |
 | Completed laps | `worker/pipeline/live_laps.py` appends each finished lap to `live-laps.json` and inserts it into `f1-data-library.f1_data_library_DS.laps_live`. `/live/laps` lists that file, newest first. |
+| Telemetry | `worker/pipeline/live_telemetry.py` merges `CarData.z` and `Position.z` onto a 0.5 s grid and inserts those rows into `telemetry_live`. |
 
 Raw frames stay on local disk. A GCS archive, under a prefix separate from the FastF1 cache, is the later home for those frames. The pitwall and SSE fan-out are still the following slice.

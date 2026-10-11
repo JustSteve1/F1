@@ -24,6 +24,7 @@ from signalrcore.hub_connection_builder import HubConnectionBuilder
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import live_laps  # noqa: E402
+import live_telemetry  # noqa: E402
 import live_token  # noqa: E402
 import timing_state  # noqa: E402
 
@@ -47,6 +48,8 @@ TIMING_TOPICS = [
     "RaceControlMessages",
     "LapCount",
     "ExtrapolatedClock",
+    "CarData.z",
+    "Position.z",
 ]
 
 SNAPSHOT_TOPICS = {
@@ -173,6 +176,7 @@ class LiveSubscriber:
         self._token = token
         self.archive = JsonlArchive(directory)
         self.laps = live_laps.LapLog(directory)
+        self.telemetry = live_telemetry.TelemetryLog(directory)
         self.state = timing_state.new_state()
         self.rates = TopicRates()
         self._lock = threading.Lock()
@@ -194,6 +198,7 @@ class LiveSubscriber:
             with self._lock:
                 completed = timing_state.completed_lap_rows(self.state, topic, payload)
                 timing_state.apply_message(self.state, topic, payload)
+                self.telemetry.observe(self.state, topic, payload)
                 snap = timing_state.snapshot(self.state) if topic in SNAPSHOT_TOPICS else None
             if completed:
                 self.laps.add(completed)
@@ -242,6 +247,7 @@ class LiveSubscriber:
         connection.send("Subscribe", [TIMING_TOPICS], on_invocation=self._handle)
 
     def stop(self) -> None:
+        self.telemetry.flush()
         if self._connection is not None:
             self._connection.stop()
         self.archive.close()
@@ -275,16 +281,24 @@ def run_live(seconds: int | None, directory: Path) -> int:
     print(f"Snapshot: {subscriber.archive.snapshot_path}")
     print(f"Laps: {subscriber.laps.path}")
     if subscriber.laps.bigquery_ready:
-        print(f"BigQuery: {live_laps.table_id()}")
+        print(f"BigQuery laps: {live_laps.table_id()}")
     else:
-        print(f"BigQuery: not writing ({subscriber.laps.bigquery_error})")
+        print(f"BigQuery laps: not writing ({subscriber.laps.bigquery_error})")
+    if subscriber.telemetry.bigquery_ready:
+        print(f"BigQuery telemetry: {live_telemetry.table_id()}")
+    else:
+        print(f"BigQuery telemetry: not writing ({subscriber.telemetry.bigquery_error})")
     started = time.monotonic()
     try:
         while True:
             time.sleep(5)
+            subscriber.telemetry.flush()
             elapsed = time.monotonic() - started
             heard = sum(len(times) for times in subscriber.rates._times.values())
-            print(f"t={elapsed:.0f}s messages={heard}")
+            print(
+                f"t={elapsed:.0f}s messages={heard} "
+                f"telemetry={subscriber.telemetry.inserted}"
+            )
             if seconds is not None and elapsed >= seconds:
                 break
     except KeyboardInterrupt:
