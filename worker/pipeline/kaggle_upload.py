@@ -1,7 +1,7 @@
 """
 Kaggle Upload — F1 lap data from BigQuery → Kaggle dataset
 
-Pulls laps from the laps_kaggle view, replaces matching Kaggle rows with
+Pulls laps from the laps_for_export view, replaces matching Kaggle rows with
 that view, keeps rows that exist only on Kaggle, and uploads one cumulative
 file as a new dataset version.
 
@@ -113,14 +113,14 @@ def download_current_kaggle_data(api: KaggleApi) -> pd.DataFrame:
 # ── Step 2: Query BigQuery for all laps ───────────────────────────────────────
 
 def fetch_bq_laps(client: bigquery.Client) -> pd.DataFrame:
-    """Fetch the Kaggle-shaped laps_kaggle view.
+    """Fetch the Kaggle-shaped laps_for_export view.
 
-    The view unions laps_live with the batch laps table. The batch row wins
-    when both tables have the same lap.
+    A session comes entirely from laps_all_live or entirely from
+    laps_all_legacy. Telemetry is never taken from the other source.
     """
-    print("  Querying BigQuery laps_kaggle…")
+    print("  Querying BigQuery laps_for_export…")
     columns = ", ".join(kaggle_merge.KAGGLE_COLUMNS)
-    query = f"SELECT {columns} FROM `{PROJECT}.{DATASET}.laps_kaggle`"
+    query = f"SELECT {columns} FROM `{PROJECT}.{DATASET}.laps_for_export`"
     df = client.query(query).to_dataframe()
     print(f"  ✅  {len(df):,} laps fetched from BigQuery")
     return df

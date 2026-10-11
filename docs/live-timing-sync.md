@@ -55,7 +55,15 @@ A session captured live is not imported again through FastF1.
 - After the session, prefer F1's own `StreamPath` files once `Index.json` sets `Path`.
 - Use FastF1 only to backfill sessions that were not captured live.
 
-BigQuery (`sessions`, `laps`, `telemetry`, `laps_unified`) stays the batch path. Live finishes go only to `laps_live`, which is created `LIKE laps`, so the two tables can be combined in a view later. The jobs admin stays the control plane for archive imports: a session captured live is not imported again through FastF1.
+BigQuery (`sessions`, `laps`, `telemetry`, `laps_unified`) stays the batch path. Live finishes go to `laps_live` (`LIKE laps`). Live position samples go to `telemetry_live` (`LIKE telemetry`). The `_live` suffix marks every architecture-v2 import. A live lap is joined only to live samples, and a batch lap is joined only to batch telemetry. The jobs admin stays the control plane for archive imports: a session captured live is not imported again through FastF1.
+
+### Export views
+
+`laps_all_legacy` reads only the batch tables. It is the `laps_unified` join of `laps` to `telemetry` on `session_key`, `driver_number`, and `lap_number`.
+
+`laps_all_live` reads only the live tables. It is the same join of `laps_live` to `telemetry_live`. Position samples are tagged with the lap in progress (`NumberOfLaps + 1`) as they arrive, so the join key is known before the lap row exists.
+
+`laps_for_export` is the view export reads. For each session it takes `laps_all_live` when that session has live laps, and `laps_all_legacy` otherwise. It never pairs a lap time from one source with telemetry from the other.
 
 ## Hosting
 

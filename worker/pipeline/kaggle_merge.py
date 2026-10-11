@@ -1,8 +1,8 @@
-"""Combine a Kaggle CSV with rows from the laps_kaggle view.
+"""Combine a Kaggle CSV with rows from laps_for_export.
 
 A view row replaces a Kaggle row with the same lap. Rows that exist only
-on Kaggle stay. The view already prefers the batch laps table over laps_live,
-so this is how a later batch load corrects a lap that was published live.
+on Kaggle stay. The view already keeps each session on one source, so a
+live lap is never paired with batch telemetry.
 """
 
 from __future__ import annotations
