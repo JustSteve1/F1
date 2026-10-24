@@ -72,9 +72,21 @@ gcloud sql instances patch interval-jobs --project=f1-data-library \
 | API token | `KAGGLE_API_TOKEN` | `kaggle-api-token` |
 | Legacy (optional fallback) | `KAGGLE_USERNAME` + `KAGGLE_KEY` | `kaggle-username` + `kaggle-key` |
 
-Also set plain env `KAGGLE_DATASET` (default `stevefza/f1-2026-bahrain-testing-day-2`).
+Also set:
 
-**Current Cloud Run setup:** `KAGGLE_API_TOKEN` ← `kaggle-api-token:latest`. Upload uses **kagglehub** (`kagglehub.dataset_upload`).
+| Env | Default | Purpose |
+|-----|---------|---------|
+| `KAGGLE_DATASET` | `stevefza/formula-one-all-laps-telemetry` | Public slug (`formula-one-<topic>`) |
+| `KAGGLE_DATASET_ID` | `9485317` | Existing dataset id so versions stay on the current listing |
+| `KAGGLE_LICENSE` | `CC-BY-4.0` | Named license (required for usability 10.0; `Other` does not count) |
+| `KAGGLE_KEYWORDS` | `sports,time series analysis,tabular,beginner` | Existing Kaggle tags |
+| `KAGGLE_REPUBLISH` | unset | Set `1` to re-push `all_laps.csv` + metadata when there are no new laps |
+
+**Existing listing is locked.** Uploads always use dataset id `9485317` (`stevefza/f1-2026-bahrain-testing-day-2`). The desired public slug `formula-one-all-laps-telemetry` is display-only until you rename the URL in Kaggle Settings. The worker will not create a second dataset.
+
+**Slug rename (manual, optional):** Kaggle’s API cannot safely change a public URL without risking a new listing. If you want the new slug, rename it in the dataset Settings page while keeping the same dataset. Votes and downloads stay on id `9485317`.
+
+**Current Cloud Run setup:** `KAGGLE_API_TOKEN` ← `kaggle-api-token:latest`. Upload writes stable `all_laps.csv` plus `dataset-metadata.json`, then calls `KaggleApi.dataset_create_version` and `dataset_metadata_update` (license, tags, provenance, file/column descriptions).
 
 **Generate credentials** at [https://www.kaggle.com/settings/api](https://www.kaggle.com/settings/api):
 
@@ -104,7 +116,7 @@ gcloud secrets add-iam-policy-binding kaggle-api-token \
 gcloud run jobs update $JOB \
   --project=$PROJECT --region=$REGION \
   --update-secrets=KAGGLE_API_TOKEN=kaggle-api-token:latest \
-  --update-env-vars=KAGGLE_DATASET=stevefza/f1-2026-bahrain-testing-day-2 \
+  --update-env-vars=KAGGLE_DATASET=stevefza/formula-one-all-laps-telemetry,KAGGLE_DATASET_ID=9485317,KAGGLE_LICENSE=CC-BY-4.0 \
   --remove-secrets=KAGGLE_USERNAME,KAGGLE_KEY
 ```
 
@@ -144,7 +156,7 @@ done
 gcloud run jobs update $JOB \
   --project=$PROJECT --region=$REGION \
   --update-secrets=KAGGLE_USERNAME=kaggle-username:latest,KAGGLE_KEY=kaggle-key:latest \
-  --update-env-vars=KAGGLE_DATASET=stevefza/f1-2026-bahrain-testing-day-2
+  --update-env-vars=KAGGLE_DATASET=stevefza/formula-one-all-laps-telemetry,KAGGLE_DATASET_ID=9485317,KAGGLE_LICENSE=CC-BY-4.0
 ```
 
 Never commit `kaggle.json`, tokens, or secret values.
