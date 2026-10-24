@@ -109,6 +109,13 @@ def replay_messages(
     state = timing_state.new_state()
     laps = live_laps.LapLog(directory, bigquery=bigquery)
     telemetry = live_telemetry.TelemetryLog(directory, bigquery=bigquery)
+    if bigquery:
+        known_laps = laps.skip_stored()
+        known_points, blocked_laps = telemetry.skip_stored()
+        print(
+            f"  stored already: {known_laps} laps, {known_points} telemetry points, "
+            f"{blocked_laps} full laps left unchanged"
+        )
     lap_rows = 0
     for index, (topic, payload) in enumerate(messages):
         completed = timing_state.completed_lap_rows(state, topic, payload)
@@ -138,7 +145,7 @@ def replay_session(
     counts = replay_messages(messages, directory, bigquery=bigquery)
     print(
         f"  replayed {counts['messages']} messages, "
-        f"{counts['laps']} laps, {counts['telemetry']} telemetry rows"
+        f"{counts['laps']} new laps, {counts['telemetry']} new telemetry rows"
     )
     return counts
 

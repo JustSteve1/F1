@@ -81,6 +81,30 @@ class LapLog:
             return
         self._sync_missing()
 
+    def remember(self, lap_ids: set[str]) -> None:
+        """Treat these lap ids as already stored so a later add does not insert them."""
+        self._seen.update(lap_ids)
+
+    def skip_stored(self) -> int:
+        """Load recent BigQuery lap ids. Raises if the lookup fails."""
+        if not self._bq_ready or self._client is None:
+            raise RuntimeError("BigQuery is not ready; refusing to write laps without a duplicate check")
+        query = f"""
+            SELECT CONCAT(
+                CAST(session_key AS STRING), '-',
+                driver_number, '-',
+                CAST(lap_number AS STRING)
+            ) AS lap_id
+            FROM `{table_id()}`
+            WHERE imported_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 3 DAY)
+        """
+        try:
+            found = {row.lap_id for row in self._client.query(query).result()}
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"could not read existing lap ids: {exc}") from exc
+        self.remember(found)
+        return len(found)
+
     def _remote_ids(self) -> set[str]:
         if not self._bq_ready or self._client is None:
             return set()
