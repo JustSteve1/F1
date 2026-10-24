@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import sys
+import tempfile
 import unittest
 import zlib
 from datetime import datetime, timedelta, timezone
@@ -129,6 +130,33 @@ class LiveTelemetryTests(unittest.TestCase):
         rows = log.observe(state, "Position.z", _pos(nxt, 110, 210, 30))
         self.assertEqual(rows[0]["lap_number"], 2)
         self.assertEqual(rows[0]["lap_time_sec"], 0.0)
+
+    def test_stored_points_and_full_laps_are_not_queued_again(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log = live_telemetry.TelemetryLog(Path(tmp), bigquery=False)
+            existing = {
+                "session_key": 7,
+                "driver_number": "44",
+                "lap_number": 10,
+                "lap_time_sec": 1.5,
+            }
+            fresh = {
+                "session_key": 7,
+                "driver_number": "44",
+                "lap_number": 10,
+                "lap_time_sec": 2.0,
+            }
+            blocked = {
+                "session_key": 7,
+                "driver_number": "44",
+                "lap_number": 11,
+                "lap_time_sec": 0.0,
+            }
+            log.remember_points({log._point_id(existing)})
+            log.remember_laps({log._lap_key(blocked)})
+            log._queue([existing, fresh, blocked])
+            self.assertEqual([row["lap_time_sec"] for row in log._pending], [2.0])
+            self.assertEqual(log.skipped, 2)
 
 
 if __name__ == "__main__":

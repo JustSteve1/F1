@@ -41,6 +41,14 @@ class LapLogTests(unittest.TestCase):
             reopened = live_laps.LapLog(Path(tmp), bigquery=False)
             self.assertEqual(reopened.add([_row(2)]), 0)
 
+    def test_a_lap_already_stored_is_not_inserted_again(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            log = live_laps.LapLog(Path(tmp), bigquery=False)
+            log.remember({timing_state.lap_id(_row(4))})
+            self.assertEqual(log.add([_row(4), _row(5)]), 1)
+            stored = json.loads((Path(tmp) / "live-laps.json").read_text())
+            self.assertEqual([row["lap_number"] for row in stored["laps"]], [5])
+
 
 if __name__ == "__main__":
     unittest.main()

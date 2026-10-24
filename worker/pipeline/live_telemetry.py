@@ -214,7 +214,9 @@ class TelemetryLog:
         self._cumulative: dict[str, float] = {}
         self._pending: list[dict[str, Any]] = []
         self._seen: set[str] = set()
+        self._blocked_laps: set[str] = set()
         self.inserted = 0
+        self.skipped = 0
         self._bq_ready = False
         self._bq_error: str | None = None
         self._client: Any = None
@@ -360,6 +362,48 @@ class TelemetryLog:
             f"{row.get('lap_number')}-{float(row.get('lap_time_sec') or 0):.1f}"
         )
 
+    def _lap_key(self, row: dict[str, Any]) -> str:
+        return f"{row.get('session_key')}-{row.get('driver_number')}-{row.get('lap_number')}"
+
+    def remember_points(self, point_ids: set[str]) -> None:
+        """Skip these sample ids. A second insert would repeat the same 0.5 s point."""
+        self._seen.update(point_ids)
+
+    def remember_laps(self, lap_keys: set[str]) -> None:
+        """Leave these laps alone. Their stored trace is already long enough to export."""
+        self._blocked_laps.update(lap_keys)
+
+    def skip_stored(self, *, full_trace_sec: float = 80.0) -> tuple[int, int]:
+        """Load recent points. A lap whose trace already reaches full_trace_sec is blocked.
+
+        Raises if BigQuery cannot be read, so a replay stops instead of inserting twice.
+        """
+        if not self._bq_ready or self._client is None:
+            raise RuntimeError(
+                "BigQuery is not ready; refusing to write telemetry without a duplicate check"
+            )
+        query = f"""
+            SELECT session_key, driver_number, lap_number, lap_time_sec
+            FROM `{table_id()}`
+            WHERE imported_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 3 DAY)
+        """
+        try:
+            rows = list(self._client.query(query).result())
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"could not read existing telemetry: {exc}") from exc
+        max_t: dict[str, float] = {}
+        point_ids: set[str] = set()
+        for row in rows:
+            lap_key = f"{row.session_key}-{row.driver_number}-{row.lap_number}"
+            t = float(row.lap_time_sec or 0)
+            point_ids.add(f"{lap_key}-{t:.1f}")
+            if t > max_t.get(lap_key, -1.0):
+                max_t[lap_key] = t
+        self.remember_points(point_ids)
+        blocked = {key for key, t in max_t.items() if t >= full_trace_sec}
+        self.remember_laps(blocked)
+        return len(point_ids), len(blocked)
+
     def _append_local(self, rows: list[dict[str, Any]]) -> None:
         path = self.directory / "telemetry-live.jsonl"
         with path.open("a", encoding="utf-8") as handle:
@@ -369,8 +413,12 @@ class TelemetryLog:
     def _queue(self, rows: list[dict[str, Any]]) -> None:
         with self._lock:
             for row in rows:
+                if self._lap_key(row) in self._blocked_laps:
+                    self.skipped += 1
+                    continue
                 key = self._point_id(row)
                 if key in self._seen:
+                    self.skipped += 1
                     continue
                 self._seen.add(key)
                 self._pending.append(row)
