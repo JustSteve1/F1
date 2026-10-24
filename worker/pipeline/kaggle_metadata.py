@@ -49,31 +49,45 @@ KAGGLE_PROVENANCE = (
     "Telemetry is downsampled to 0.5 second / 2 Hz for export. "
     "This is not an official Formula 1 product."
 )
+KAGGLE_DESCRIPTION_DEFAULT = (
+    "# Formula One — all laps and telemetry\n\n"
+    "One row per lap for the live Formula One season, with a JSON `telemetry` "
+    "column of 2 Hz samples (speed, throttle, brake, gear, rpm, DRS, and XYZ).\n\n"
+    "## What's in the file\n"
+    "`all_laps.csv` is the stable export. Columns cover season, event, circuit, "
+    "session type (FP1–FP3, Q, SQ, Sprint, R, testing), driver, lap time, "
+    "compound, tyre age, stint, and the telemetry array.\n\n"
+    "## How it is built\n"
+    "Laps and telemetry come from FastF1 / official timing and OpenF1, cleaned "
+    "in BigQuery (`f1-data-library`). Telemetry is downsampled to 0.5 s / 2 Hz "
+    "for a usable public file size. Updated weekly when new sessions land.\n\n"
+    "This is not an official Formula 1 product."
+)
 COLUMN_FIELDS: list[dict[str, str]] = [
-    {"name": "season", "description": "Championship year", "type": "integer"},
-    {"name": "event_name", "description": "Official or pipeline event name", "type": "string"},
-    {"name": "circuit", "description": "Circuit name", "type": "string"},
+    {"name": "season", "description": "Championship year", "type": "Integer"},
+    {"name": "event_name", "description": "Official or pipeline event name", "type": "String"},
+    {"name": "circuit", "description": "Circuit name", "type": "String"},
     {
         "name": "session_type",
         "description": "FP1, FP2, FP3, Q, SQ, Sprint, R, or testing day",
-        "type": "string",
+        "type": "String",
     },
-    {"name": "driver", "description": "Driver code (VER, HAM, …)", "type": "string"},
-    {"name": "driver_number", "description": "Race number", "type": "integer"},
-    {"name": "lap_number", "description": "Lap index in that session", "type": "integer"},
+    {"name": "driver", "description": "Driver code (VER, HAM, …)", "type": "String"},
+    {"name": "driver_number", "description": "Race number", "type": "Integer"},
+    {"name": "lap_number", "description": "Lap index in that session", "type": "Integer"},
     {
         "name": "lap_time",
         "description": "Formatted M:SS.mmm; 0:00.000 means no valid time",
-        "type": "string",
+        "type": "String",
     },
-    {"name": "lap_duration", "description": "Lap time in seconds", "type": "numeric"},
-    {"name": "compound", "description": "Tyre compound", "type": "string"},
-    {"name": "tyre_age", "description": "Laps on this tyre set", "type": "integer"},
-    {"name": "stint_number", "description": "Stint index", "type": "integer"},
+    {"name": "lap_duration", "description": "Lap time in seconds", "type": "Decimal"},
+    {"name": "compound", "description": "Tyre compound", "type": "String"},
+    {"name": "tyre_age", "description": "Laps on this tyre set", "type": "Integer"},
+    {"name": "stint_number", "description": "Stint index", "type": "Integer"},
     {
         "name": "telemetry",
         "description": "JSON array of 0.5 s / 2 Hz samples for the lap",
-        "type": "string",
+        "type": "String",
     },
 ]
 _COLUMN_FIELD_BY_NAME = {field["name"]: field for field in COLUMN_FIELDS}
@@ -200,8 +214,15 @@ def build_dataset_metadata(
         ],
     }
     description = existing.get("description")
+    if not (isinstance(description, str) and description.strip()):
+        # Downloaded Kaggle metadata nests fields under "info".
+        nested = existing.get("info")
+        if isinstance(nested, dict):
+            description = nested.get("description")
     if isinstance(description, str) and description.strip():
         metadata["description"] = description
+    else:
+        metadata["description"] = KAGGLE_DESCRIPTION_DEFAULT
     return metadata
 
 
@@ -224,4 +245,7 @@ def load_metadata_file(path: str | Path) -> dict[str, Any]:
         raw = json.loads(raw)
     if not isinstance(raw, dict):
         raise ValueError(f"Expected metadata object in {path}")
+    info = raw.get("info")
+    if isinstance(info, dict) and ("title" in info or "subtitle" in info or "description" in info):
+        return info
     return raw

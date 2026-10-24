@@ -82,6 +82,11 @@ class MetadataBuilderTests(unittest.TestCase):
         built = meta.build_dataset_metadata(existing={"subtitle": "too short"})
         self.assertEqual(built["subtitle"], meta.KAGGLE_SUBTITLE_DEFAULT)
 
+    def test_empty_description_gets_default(self) -> None:
+        built = meta.build_dataset_metadata(existing={"description": ""})
+        self.assertIn("all_laps.csv", built["description"])
+        self.assertGreater(len(built["description"]), 100)
+
     def test_version_id_uses_live_handle_not_target_slug(self) -> None:
         built = meta.build_dataset_metadata(live_handle="stevefza/f1-2026-bahrain-testing-day-2")
         self.assertEqual(built["id"], "stevefza/f1-2026-bahrain-testing-day-2")
