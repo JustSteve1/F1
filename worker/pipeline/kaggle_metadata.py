@@ -19,6 +19,14 @@ KAGGLE_DATASET_ID_DEFAULT = 9485317
 # Locked to the existing public listing so votes/downloads cannot move to a new slug.
 KAGGLE_DATASET_ID_LOCKED = 9485317
 KAGGLE_LICENSE_DEFAULT = "CC-BY-4.0"
+# Newer Kaggle Settings API rejects some documented slugs. Try these in order.
+KAGGLE_LICENSE_CANDIDATES = (
+    "CC-BY-4.0",
+    "CC-BY-SA-4.0",
+    "CC0-1.0",
+    "CC-BY-SA-3.0",
+    "ODbL-1.0",
+)
 KAGGLE_KEYWORDS_DEFAULT = (
     "sports",
     "time series analysis",
@@ -101,6 +109,15 @@ def require_existing_dataset_id() -> int:
 
 def kaggle_license() -> str:
     return os.environ.get("KAGGLE_LICENSE", KAGGLE_LICENSE_DEFAULT).strip() or KAGGLE_LICENSE_DEFAULT
+
+
+def kaggle_license_candidates() -> list[str]:
+    preferred = kaggle_license()
+    seen: list[str] = []
+    for name in (preferred, *KAGGLE_LICENSE_CANDIDATES):
+        if name and name not in seen:
+            seen.append(name)
+    return seen
 
 
 def kaggle_keywords() -> list[str]:
@@ -189,18 +206,15 @@ def build_dataset_metadata(
 
 
 def write_metadata_file(path: str | Path, metadata: dict[str, Any], *, for_update: bool = False) -> Path:
-    """
-    Write dataset-metadata.json.
+    """Write dataset-metadata.json as a JSON object.
 
-    Kaggle's dataset_metadata_update does json.load() then json.loads(), so the
-    update file must be a JSON-encoded string. Version create wants a JSON object.
+    Current KaggleApi.dataset_metadata_update json.load()s the file once and
+    expects a dict. Older clients double-decoded a JSON string; load_metadata_file
+    still accepts that form.
     """
     dest = Path(path)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if for_update:
-        dest.write_text(json.dumps(json.dumps(metadata, default=str)), encoding="utf-8")
-    else:
-        dest.write_text(json.dumps(metadata, indent=2, default=str) + "\n", encoding="utf-8")
+    dest.write_text(json.dumps(metadata, indent=2, default=str) + "\n", encoding="utf-8")
     return dest
 
 

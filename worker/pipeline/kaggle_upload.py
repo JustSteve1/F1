@@ -40,6 +40,7 @@ from kaggle_metadata import (
     env_flag,
     is_kaggle_laps_csv,
     kaggle_dataset,
+    kaggle_license_candidates,
     load_metadata_file,
     require_existing_dataset_id,
     write_metadata_file,
@@ -127,7 +128,23 @@ def download_current_kaggle_data(api: KaggleApi) -> pd.DataFrame:
         downloaded = False
         for ref in dataset_handle_candidates():
             try:
-                api.dataset_download_files(ref, path=tmp_dir, unzip=True)
+                listing = api.dataset_list_files(ref)
+                files = getattr(listing, "dataset_files", None) or getattr(listing, "files", None) or []
+                if not files and isinstance(listing, dict):
+                    files = listing.get("datasetFiles") or listing.get("files") or []
+                names: list[str] = []
+                for item in files:
+                    name = getattr(item, "name", None) or (item.get("name") if isinstance(item, dict) else None)
+                    if name:
+                        names.append(name)
+                if not names:
+                    # Newer kaggle clients 404 on DownloadDataset; per-file download still works.
+                    api.dataset_download_files(ref, path=tmp_dir, unzip=True)
+                else:
+                    for name in names:
+                        if not is_kaggle_laps_csv(name):
+                            continue
+                        api.dataset_download_file(ref, name, path=tmp_dir, force=True, quiet=False)
                 print(f"  Downloaded {ref}")
                 downloaded = True
                 break
@@ -142,12 +159,13 @@ def download_current_kaggle_data(api: KaggleApi) -> pd.DataFrame:
 
         all_dfs = []
         for fname in os.listdir(tmp_dir):
-            if not is_kaggle_laps_csv(fname):
+            decoded = fname.replace("%20", " ")
+            if not (is_kaggle_laps_csv(fname) or is_kaggle_laps_csv(decoded)):
                 continue
             fpath = os.path.join(tmp_dir, fname)
             df = pd.read_csv(fpath, low_memory=False)
             all_dfs.append(df)
-            print(f"  Found: {fname} ({len(df):,} rows)")
+            print(f"  Found: {decoded} ({len(df):,} rows)")
 
         if not all_dfs:
             print("  No existing laps CSV found — starting fresh.")
@@ -196,6 +214,38 @@ def fetch_bq_laps(client: bigquery.Client) -> pd.DataFrame:
     """
     df = client.query(query).to_dataframe()
     print(f"  ✅  {len(df):,} laps fetched from BigQuery")
+    return df
+
+
+def fetch_ready_kaggle_laps(client: bigquery.Client) -> pd.DataFrame:
+    """Rows already shaped for Kaggle (including telemetry JSON) in laps_kaggle."""
+    print("  Querying laps_kaggle export table…")
+    query = f"""
+        SELECT
+            season,
+            event_name,
+            circuit,
+            session_type,
+            driver,
+            CAST(driver_number AS INT64) AS driver_number,
+            CAST(lap_number    AS INT64) AS lap_number,
+            lap_time,
+            lap_duration,
+            compound,
+            tyre_age,
+            stint_number,
+            telemetry
+        FROM `{PROJECT}.{DATASET}.laps_kaggle`
+        WHERE driver IS NOT NULL
+          AND lap_number IS NOT NULL
+          AND telemetry IS NOT NULL
+    """
+    try:
+        df = client.query(query).to_dataframe()
+    except Exception as exc:  # noqa: BLE001 — table may be missing in some envs
+        print(f"  laps_kaggle unavailable ({exc})")
+        return pd.DataFrame()
+    print(f"  ✅  {len(df):,} ready-made Kaggle rows from laps_kaggle")
     return df
 
 
@@ -363,6 +413,38 @@ def combine_kaggle_frames(existing_df: pd.DataFrame, new_rows: pd.DataFrame) -> 
 
 # ── Step 6: Upload to Kaggle ──────────────────────────────────────────────────
 
+def apply_kaggle_metadata(api: KaggleApi, handle: str, columns: list[str] | None = None) -> None:
+    """Write dataset-metadata.json and PATCH license/tags/schema on the live listing."""
+    require_existing_dataset_id()
+    existing_card = fetch_existing_card_metadata(api, handle)
+    last_error: Exception | None = None
+    tmp_dir = tempfile.mkdtemp(prefix="kaggle_meta_")
+    try:
+        for license_name in kaggle_license_candidates():
+            metadata = build_dataset_metadata(
+                columns=columns,
+                existing=existing_card,
+                live_handle=handle,
+            )
+            metadata["licenses"] = [{"name": license_name}]
+            write_metadata_file(os.path.join(tmp_dir, "dataset-metadata.json"), metadata)
+            print(f"  Updating dataset settings (license={license_name}, tags, provenance)…")
+            try:
+                api.dataset_metadata_update(handle, tmp_dir)
+                print(f"  ✅  Dataset settings updated with license {license_name}")
+                return
+            except SystemExit as exc:
+                last_error = RuntimeError(f"Kaggle metadata update exited ({exc})")
+                print(f"  License {license_name} rejected, trying next…")
+            except Exception as exc:  # noqa: BLE001 — try next standard license
+                last_error = exc
+                print(f"  License {license_name} failed ({exc}), trying next…")
+        if last_error is not None:
+            raise last_error
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def upload_to_kaggle(combined_df: pd.DataFrame, api: KaggleApi | None = None):
     """Save all_laps.csv and publish a version plus usability metadata."""
     require_existing_dataset_id()
@@ -392,19 +474,13 @@ def upload_to_kaggle(combined_df: pd.DataFrame, api: KaggleApi | None = None):
         print(f"  Uploading → kaggle.com/datasets/{metadata['id']} (handle {handle})…")
         api.dataset_create_version(tmp_dir, notes, quiet=False, convert_to_csv=False)
 
-        write_metadata_file(
-            os.path.join(tmp_dir, "dataset-metadata.json"),
-            metadata,
-            for_update=True,
-        )
-        print("  Updating dataset settings (license, tags, provenance)…")
-        api.dataset_metadata_update(handle, tmp_dir)
+        apply_kaggle_metadata(api, handle, columns=list(combined_df.columns))
         print(f"  ✅  Uploaded {KAGGLE_CSV_NAME} with usability metadata")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def run_kaggle_upload(*, republish: bool = False) -> None:
+def run_kaggle_upload(*, republish: bool = False, metadata_only: bool = False) -> None:
     print("\n📤  F1 → Kaggle Upload")
     print(f"    BigQuery : {PROJECT}.{DATASET}")
     print(f"    Kaggle   : {kaggle_dataset()}")
@@ -418,37 +494,47 @@ def run_kaggle_upload(*, republish: bool = False) -> None:
     api.authenticate()
     print("  ✅  Kaggle authenticated\n")
 
+    if metadata_only:
+        handle = resolve_dataset_handle(api)
+        apply_kaggle_metadata(api, handle)
+        print("\n✅  Kaggle metadata update complete.\n")
+        return
+
     bq = bigquery.Client(project=PROJECT)
 
     print("── Step 1: Download existing Kaggle data…")
     existing_df = download_current_kaggle_data(api)
 
     print("\n── Step 2: Fetch laps from BigQuery…")
+    ready_df = fetch_ready_kaggle_laps(bq)
     bq_laps = fetch_bq_laps(bq)
-    if bq_laps.empty:
+    if ready_df.empty and bq_laps.empty:
         print("  No laps in BigQuery. Nothing to upload.")
         return
 
     print("\n── Step 3: Identify new laps…")
-    new_laps = find_new_laps(bq_laps, existing_df)
-    if new_laps.empty and not republish:
+    new_ready = find_new_laps(ready_df, existing_df) if not ready_df.empty else ready_df
+    new_laps = find_new_laps(bq_laps, existing_df) if not bq_laps.empty else bq_laps
+    if new_ready.empty and new_laps.empty and not republish:
         print("  Nothing new to upload. Kaggle dataset is already up to date.")
         return
 
-    if new_laps.empty:
+    combined = existing_df
+    if not new_ready.empty:
+        print(f"  Appending {len(new_ready):,} ready-made export rows (incl. US GP FP3 when present).")
+        combined = combine_kaggle_frames(combined, new_ready)
+    if new_laps.empty and new_ready.empty:
         print("  Republish requested — re-uploading current laps with metadata.")
-        if existing_df.empty:
+        if combined.empty:
             telemetry_df = fetch_telemetry_for_laps(bq, bq_laps)
             combined = build_kaggle_rows(bq_laps, telemetry_df)
-        else:
-            combined = existing_df
-    else:
+    elif not new_laps.empty:
         print("\n── Step 4: Fetch telemetry for new laps…")
         telemetry_df = fetch_telemetry_for_laps(bq, new_laps)
         print("\n── Step 5: Build Kaggle rows…")
         new_kaggle_rows = build_kaggle_rows(new_laps, telemetry_df)
         print(f"  ✅  {len(new_kaggle_rows):,} rows built")
-        combined = combine_kaggle_frames(existing_df, new_kaggle_rows)
+        combined = combine_kaggle_frames(combined, new_kaggle_rows)
 
     print(f"  ✅  Total rows for upload: {len(combined):,}")
     print("\n── Step 6: Upload to Kaggle…")
@@ -463,8 +549,16 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Re-upload the current CSV with metadata even if no new laps exist",
     )
+    parser.add_argument(
+        "--metadata-only",
+        action="store_true",
+        help="PATCH license/tags/schema on the live listing without uploading files",
+    )
     args = parser.parse_args(argv)
-    run_kaggle_upload(republish=args.republish or env_flag("KAGGLE_REPUBLISH"))
+    run_kaggle_upload(
+        republish=args.republish or env_flag("KAGGLE_REPUBLISH"),
+        metadata_only=args.metadata_only,
+    )
 
 
 if __name__ == "__main__":

@@ -95,7 +95,7 @@ class MetadataBuilderTests(unittest.TestCase):
 
 
 class MetadataFileTests(unittest.TestCase):
-    def test_version_file_is_object_update_file_is_double_encoded(self) -> None:
+    def test_version_and_update_files_are_json_objects(self) -> None:
         payload = {"id": "stevefza/formula-one-all-laps-telemetry"}
         with tempfile.TemporaryDirectory() as tmp:
             version_path = Path(tmp) / "dataset-metadata.json"
@@ -106,7 +106,7 @@ class MetadataFileTests(unittest.TestCase):
             update_path = Path(tmp) / "update.json"
             meta.write_metadata_file(update_path, payload, for_update=True)
             raw = json.loads(update_path.read_text())
-            self.assertIsInstance(raw, str)
+            self.assertIsInstance(raw, dict)
             self.assertEqual(meta.load_metadata_file(update_path)["id"], payload["id"])
 
 
