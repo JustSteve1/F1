@@ -93,12 +93,20 @@ export function LiveLapsTable() {
             Newest finish first · {laps.length} row{laps.length === 1 ? "" : "s"}
           </p>
         </div>
-        <Link
-          href="/live"
-          className="font-mono text-[11px] uppercase tracking-widest text-white/50 hover:text-white"
-        >
-          Timing tower
-        </Link>
+        <div className="flex gap-4">
+          <Link
+            href="/live/map"
+            className="font-mono text-[11px] uppercase tracking-widest text-white/50 hover:text-white"
+          >
+            Speed map
+          </Link>
+          <Link
+            href="/live"
+            className="font-mono text-[11px] uppercase tracking-widest text-white/50 hover:text-white"
+          >
+            Timing tower
+          </Link>
+        </div>
       </div>
 
       {error && laps.length === 0 ? (
