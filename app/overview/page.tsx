@@ -5,9 +5,9 @@ import { ExternalLink } from "lucide-react";
 
 const KEY_LINKS = [
   {
-    label: "Kaggle — F1 2026 Bahrain Testing Day 2",
-    href: "https://www.kaggle.com/datasets/stevefza/f1-2026-bahrain-testing-day-2",
-    note: "Public dataset export for testing day 2 telemetry and session data.",
+    label: "Kaggle — Formula One All Laps & Telemetry",
+    href: "https://www.kaggle.com/datasets/stevefza/formula-one-all-laps-telemetry",
+    note: "Public live lap and 2 Hz telemetry export for the full season.",
   },
   {
     label: "GitHub — JustSteve1/F1",
@@ -96,7 +96,7 @@ export default function OverviewPage() {
               review and model work.
             </p>
             <p>
-              Bahrain 2026 testing day 2 is available as a public Kaggle dataset
+              The live Formula One all-laps dataset is published on Kaggle
               (link below). Additional sessions follow the same export path as they
               are imported.
             </p>

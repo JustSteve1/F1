@@ -218,7 +218,7 @@ export const PIPELINE_GUIDE: Record<StepKey, PipelineGuideStep> = {
     notebookCell: null,
     short: "Optional export from BigQuery to a Kaggle dataset.",
     detail:
-      "App-only step (not in the Colab notebook). When includeKaggle is set, the worker packages selected tables and pushes them to Kaggle for public/research use.",
+      "App-only step (not in the Colab notebook). When includeKaggle is set, the worker publishes all_laps.csv plus dataset-metadata.json to stevefza/formula-one-all-laps-telemetry.",
     writes: [],
     inputs: ["BigQuery dataset slices"],
     outputs: ["Kaggle dataset revision"],

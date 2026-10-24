@@ -269,42 +269,8 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
 
     def kaggle():
         import kaggle_upload as kag
-        from kaggle.api.kaggle_api_extended import KaggleApi
-        kag.ensure_kaggle_auth()
 
-        api = KaggleApi()
-        api.authenticate()
-        bq = bigquery.Client(project=kag.PROJECT)
-        existing_df = kag.download_current_kaggle_data(api)
-        bq_laps = kag.fetch_bq_laps(bq)
-        if bq_laps.empty:
-            db.append_log(job_id, "No laps in BigQuery for Kaggle upload")
-            return
-        new_laps = kag.find_new_laps(bq_laps, existing_df)
-        if new_laps.empty:
-            db.append_log(job_id, "Kaggle already up to date — nothing new")
-            return
-        telemetry_df = kag.fetch_telemetry_for_laps(bq, new_laps)
-        new_rows = kag.build_kaggle_rows(new_laps, telemetry_df)
-        if existing_df.empty:
-            combined = new_rows
-        else:
-            existing_trimmed = existing_df[
-                new_rows.columns.intersection(existing_df.columns)
-            ]
-            import pandas as pd
-
-            combined = pd.concat([existing_trimmed, new_rows], ignore_index=True)
-        combined = combined.drop_duplicates(
-            subset=[
-                "season",
-                "event_name",
-                "session_type",
-                "driver_number",
-                "lap_number",
-            ]
-        )
-        kag.upload_to_kaggle(combined)
+        kag.run_kaggle_upload(republish=kag.env_flag("KAGGLE_REPUBLISH"))
 
     plan: list[tuple[str, str, Callable[[], None]]] = [
         ("load_fastf1", "Load FastF1 sessions", load),
