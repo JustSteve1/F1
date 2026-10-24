@@ -82,7 +82,9 @@ Also set:
 | `KAGGLE_KEYWORDS` | `sports,time series analysis,tabular,beginner` | Existing Kaggle tags |
 | `KAGGLE_REPUBLISH` | unset | Set `1` to re-push `all_laps.csv` + metadata when there are no new laps |
 
-**Slug rename:** change the dataset URL in Kaggle Settings to `formula-one-all-laps-telemetry`. Until that lands, the worker still downloads and updates metadata via the live handle `stevefza/f1-2026-bahrain-testing-day-2`. Uploads target dataset id `9485317`.
+**Existing listing is locked.** Uploads always use dataset id `9485317` (`stevefza/f1-2026-bahrain-testing-day-2`). The desired public slug `formula-one-all-laps-telemetry` is display-only until you rename the URL in Kaggle Settings. The worker will not create a second dataset.
+
+**Slug rename (manual, optional):** Kaggle’s API cannot safely change a public URL without risking a new listing. If you want the new slug, rename it in the dataset Settings page while keeping the same dataset. Votes and downloads stay on id `9485317`.
 
 **Current Cloud Run setup:** `KAGGLE_API_TOKEN` ← `kaggle-api-token:latest`. Upload writes stable `all_laps.csv` plus `dataset-metadata.json`, then calls `KaggleApi.dataset_create_version` and `dataset_metadata_update` (license, tags, provenance, file/column descriptions).
 

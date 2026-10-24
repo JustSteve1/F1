@@ -41,6 +41,7 @@ from kaggle_metadata import (
     is_kaggle_laps_csv,
     kaggle_dataset,
     load_metadata_file,
+    require_existing_dataset_id,
     write_metadata_file,
 )
 
@@ -360,6 +361,7 @@ def combine_kaggle_frames(existing_df: pd.DataFrame, new_rows: pd.DataFrame) -> 
 
 def upload_to_kaggle(combined_df: pd.DataFrame, api: KaggleApi | None = None):
     """Save all_laps.csv and publish a version plus usability metadata."""
+    require_existing_dataset_id()
     ensure_kaggle_auth()
     if api is None:
         api = KaggleApi()
@@ -368,7 +370,11 @@ def upload_to_kaggle(combined_df: pd.DataFrame, api: KaggleApi | None = None):
     today = datetime.now().strftime("%-d %B %Y")
     handle = resolve_dataset_handle(api)
     existing_card = fetch_existing_card_metadata(api, handle)
-    metadata = build_dataset_metadata(columns=list(combined_df.columns), existing=existing_card)
+    metadata = build_dataset_metadata(
+        columns=list(combined_df.columns),
+        existing=existing_card,
+        live_handle=handle,
+    )
 
     tmp_dir = tempfile.mkdtemp(prefix="kaggle_upload_")
     try:

@@ -6,8 +6,8 @@ import { ExternalLink } from "lucide-react";
 const KEY_LINKS = [
   {
     label: "Kaggle — Formula One All Laps & Telemetry",
-    href: "https://www.kaggle.com/datasets/stevefza/formula-one-all-laps-telemetry",
-    note: "Public live lap and 2 Hz telemetry export for the full season.",
+    href: "https://www.kaggle.com/datasets/stevefza/f1-2026-bahrain-testing-day-2",
+    note: "Public live lap and 2 Hz telemetry export for the full season (listing 9485317).",
   },
   {
     label: "GitHub — JustSteve1/F1",

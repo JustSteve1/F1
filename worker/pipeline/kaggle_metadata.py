@@ -16,6 +16,8 @@ KAGGLE_CSV_NAME = "all_laps.csv"
 KAGGLE_DATASET_DEFAULT = "stevefza/formula-one-all-laps-telemetry"
 KAGGLE_DATASET_LEGACY = "stevefza/f1-2026-bahrain-testing-day-2"
 KAGGLE_DATASET_ID_DEFAULT = 9485317
+# Locked to the existing public listing so votes/downloads cannot move to a new slug.
+KAGGLE_DATASET_ID_LOCKED = 9485317
 KAGGLE_LICENSE_DEFAULT = "CC-BY-4.0"
 KAGGLE_KEYWORDS_DEFAULT = (
     "sports",
@@ -84,6 +86,19 @@ def kaggle_dataset_id() -> int | None:
     return int(raw)
 
 
+def require_existing_dataset_id() -> int:
+    """Refuse any upload that is not the existing public listing."""
+    dataset_id = kaggle_dataset_id()
+    if dataset_id != KAGGLE_DATASET_ID_LOCKED:
+        raise RuntimeError(
+            "Refusing Kaggle upload: this pipeline is locked to dataset id "
+            f"{KAGGLE_DATASET_ID_LOCKED} ({KAGGLE_DATASET_LEGACY}) so votes "
+            "and downloads stay on the existing listing. "
+            f"Got KAGGLE_DATASET_ID={dataset_id!r}."
+        )
+    return dataset_id
+
+
 def kaggle_license() -> str:
     return os.environ.get("KAGGLE_LICENSE", KAGGLE_LICENSE_DEFAULT).strip() or KAGGLE_LICENSE_DEFAULT
 
@@ -134,14 +149,18 @@ def build_dataset_metadata(
     *,
     columns: Iterable[str] | None = None,
     existing: dict[str, Any] | None = None,
+    live_handle: str | None = None,
 ) -> dict[str, Any]:
     existing = existing or {}
     fields = schema_fields_for_columns(columns if columns is not None else [f["name"] for f in COLUMN_FIELDS])
     subtitle = (existing.get("subtitle") or KAGGLE_SUBTITLE_DEFAULT).strip()
     if not (20 <= len(subtitle) <= 80):
         subtitle = KAGGLE_SUBTITLE_DEFAULT
+    # Version `id` must be the live listing. A new slug here without id_no
+    # would create a second dataset and zero the stats.
     metadata: dict[str, Any] = {
-        "id": kaggle_dataset(),
+        "id": live_handle or KAGGLE_DATASET_LEGACY,
+        "id_no": require_existing_dataset_id(),
         "title": (existing.get("title") or KAGGLE_TITLE_DEFAULT).strip() or KAGGLE_TITLE_DEFAULT,
         "subtitle": subtitle,
         "licenses": [{"name": kaggle_license()}],
@@ -166,9 +185,6 @@ def build_dataset_metadata(
     description = existing.get("description")
     if isinstance(description, str) and description.strip():
         metadata["description"] = description
-    dataset_id = kaggle_dataset_id()
-    if dataset_id is not None:
-        metadata["id_no"] = dataset_id
     return metadata
 
 

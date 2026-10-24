@@ -46,7 +46,7 @@ class MetadataBuilderTests(unittest.TestCase):
             os.environ.pop("KAGGLE_DATASET_ID", None)
             built = meta.build_dataset_metadata()
 
-        self.assertEqual(built["id"], "stevefza/formula-one-all-laps-telemetry")
+        self.assertEqual(built["id"], meta.KAGGLE_DATASET_LEGACY)
         self.assertEqual(built["id_no"], 9485317)
         self.assertEqual(built["licenses"], [{"name": "CC-BY-4.0"}])
         self.assertEqual(
@@ -81,6 +81,17 @@ class MetadataBuilderTests(unittest.TestCase):
     def test_short_subtitle_is_replaced(self) -> None:
         built = meta.build_dataset_metadata(existing={"subtitle": "too short"})
         self.assertEqual(built["subtitle"], meta.KAGGLE_SUBTITLE_DEFAULT)
+
+    def test_version_id_uses_live_handle_not_target_slug(self) -> None:
+        built = meta.build_dataset_metadata(live_handle="stevefza/f1-2026-bahrain-testing-day-2")
+        self.assertEqual(built["id"], "stevefza/f1-2026-bahrain-testing-day-2")
+        self.assertEqual(built["id_no"], 9485317)
+
+    def test_refuses_upload_to_a_different_dataset_id(self) -> None:
+        with patch.dict(os.environ, {"KAGGLE_DATASET_ID": "1"}):
+            with self.assertRaises(RuntimeError) as ctx:
+                meta.build_dataset_metadata()
+            self.assertIn("9485317", str(ctx.exception))
 
 
 class MetadataFileTests(unittest.TestCase):
