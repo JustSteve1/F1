@@ -69,7 +69,12 @@ class EnsureTests(unittest.TestCase):
             mock.patch.object(live_token, "verify_token", side_effect=_unverified),
             mock.patch.dict(
                 os.environ,
-                {f1_account.ENV_USERNAME: "", f1_account.ENV_PASSWORD: "", f1_account.ENV_CREDENTIALS_FILE: ""},
+                {
+                    f1_account.ENV_USERNAME: "",
+                    f1_account.ENV_USERNAME_ALIAS: "",
+                    f1_account.ENV_PASSWORD: "",
+                    f1_account.ENV_CREDENTIALS_FILE: "",
+                },
             ),
             mock.patch.object(f1_account, "_credentials_from_keychain", return_value=None),
         ]

@@ -56,6 +56,8 @@ PING_SDK_HEADERS = {"X-Requested-With": "ping-sdk"}
 TIMEOUT = (5, 30)
 
 ENV_USERNAME = "F1_USERNAME"
+# The earlier agent VMs stored the account as F1_EMAIL; both names work.
+ENV_USERNAME_ALIAS = "F1_EMAIL"
 ENV_PASSWORD = "F1_PASSWORD"
 ENV_CREDENTIALS_FILE = "F1_CREDENTIALS_FILE"
 ENV_KEYCHAIN_SERVICE = "F1_KEYCHAIN_SERVICE"
@@ -202,7 +204,8 @@ def credentials_from_environment() -> Credentials | None:
     600); the macOS keychain item whose service is ``F1_KEYCHAIN_SERVICE``
     (default ``interval-f1-account``). Returns ``None`` when nothing is set.
     """
-    username, password = os.environ.get(ENV_USERNAME), os.environ.get(ENV_PASSWORD)
+    username = os.environ.get(ENV_USERNAME) or os.environ.get(ENV_USERNAME_ALIAS)
+    password = os.environ.get(ENV_PASSWORD)
     if username and password:
         return Credentials(username, password, "env")
 
@@ -214,7 +217,8 @@ def credentials_from_environment() -> Credentials | None:
                 data = json.loads(path.read_text())
             except ValueError as exc:
                 raise F1AccountError(f"{path} is not valid JSON.") from exc
-            username, password = data.get("username"), data.get("password")
+            username = data.get("username") or data.get("email")
+            password = data.get("password")
             if username and password:
                 return Credentials(str(username), str(password), "file")
 

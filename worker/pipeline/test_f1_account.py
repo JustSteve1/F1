@@ -120,9 +120,16 @@ class CredentialTests(unittest.TestCase):
             found = f1_account.credentials_from_environment()
         self.assertEqual((found.username, found.password, found.source), ("a@b.c", "pw", "env"))
 
+    def test_legacy_email_name_is_accepted(self) -> None:
+        env = {f1_account.ENV_USERNAME: "", f1_account.ENV_USERNAME_ALIAS: "a@b.c", f1_account.ENV_PASSWORD: "pw"}
+        with mock.patch.dict(os.environ, env, clear=False):
+            found = f1_account.credentials_from_environment()
+        self.assertEqual(found.username, "a@b.c")
+
     def test_nothing_configured_is_none(self) -> None:
         cleared = {
             f1_account.ENV_USERNAME: "",
+            f1_account.ENV_USERNAME_ALIAS: "",
             f1_account.ENV_PASSWORD: "",
             f1_account.ENV_CREDENTIALS_FILE: "",
         }

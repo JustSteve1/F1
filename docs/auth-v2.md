@@ -43,7 +43,7 @@ The token file itself is unchanged: `~/.config/interval/f1-subscription-token`, 
 
 Tier 2 is optional. Without it the branch still renews unattended for about a month, then asks you to sign in once. With it the watcher survives the 30-day session expiry on its own.
 
-- `F1_USERNAME` / `F1_PASSWORD` in the environment of the watcher process (launchd `EnvironmentVariables`, or a `.env` you source).
+- `F1_USERNAME` / `F1_PASSWORD` in the environment of the watcher process (launchd `EnvironmentVariables`, or a `.env` you source). `F1_EMAIL` is accepted as well, which is the name the earlier agent VMs used in `~/.config/interval/f1-account.env`.
 - `F1_CREDENTIALS_FILE=~/.config/interval/f1-credentials.json` containing `{"username": "...", "password": "..."}`, mode 600.
 - macOS keychain, no file at all: `security add-generic-password -s interval-f1-account -a you@example.com -w` (it prompts for the password). Set `F1_KEYCHAIN_SERVICE` to use another item name.
 
@@ -101,6 +101,12 @@ The Mac must be awake during sessions. `caffeinate -s` in the plist, or Energy S
 3. **Which machine runs the watcher.** Your Mac is fine for a weekend; a Raspberry Pi or NUC on home Wi-Fi is better for a season. The code has no macOS dependency except the keychain lookup.
 4. **Lead time.** 60 minutes matches FastF1's advice for a complete `DriverList`/`SessionInfo` picture; 30 would do if the Mac is otherwise busy.
 5. **Backfill after a session.** `live_archive.py` can replay the official archive once `Index.json` lists the session. The watcher does not call it yet; it would be a natural post-stop step when restarts left a gap.
+
+## Evidence from the earlier runs
+
+The transcript of the Architecture v2.0 run shows the same four-day life every time (4→8, 10→14, 24→28 October) and two sign-ins that did not need a human: on 10 October the agent signed in itself through a real Chrome with the stored email and password, and no 2FA or captcha appeared. That is the same credential path tier 2 uses, with the browser removed. The 24 October sign-in went through VNC only because the agent chose to.
+
+That transcript also contains the F1 account password in plain text (it was pasted into the chat on 4 October). Changing it once the keychain item is set up would be prudent.
 
 ## Known limits and the first thing to verify
 
