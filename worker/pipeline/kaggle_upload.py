@@ -324,16 +324,20 @@ def build_kaggle_rows(new_laps: pd.DataFrame, telemetry_df: pd.DataFrame) -> pd.
 
 def ensure_kaggle_auth() -> None:
     """Ensure the Kaggle API can authenticate (prefer KAGGLE_API_TOKEN)."""
-    if os.environ.get("KAGGLE_API_TOKEN", "").strip():
+    kdir = Path(os.path.expanduser("~/.kaggle"))
+    token = os.environ.get("KAGGLE_API_TOKEN", "").strip()
+    if token:
+        kdir.mkdir(parents=True, exist_ok=True)
+        access = kdir / "access_token"
+        if not access.is_file() or access.read_text().strip() != token:
+            access.write_text(token)
+            access.chmod(0o600)
         return
-    if Path(os.path.expanduser("~/.kaggle/access_token")).is_file():
-        return
-    if Path(os.path.expanduser("~/.kaggle/kaggle.json")).is_file():
+    if (kdir / "access_token").is_file() or (kdir / "kaggle.json").is_file():
         return
     user = os.environ.get("KAGGLE_USERNAME", "").strip()
     key = os.environ.get("KAGGLE_KEY", "").strip()
     if user and key:
-        kdir = Path(os.path.expanduser("~/.kaggle"))
         kdir.mkdir(parents=True, exist_ok=True)
         cfg = kdir / "kaggle.json"
         if not cfg.is_file():
