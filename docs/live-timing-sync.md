@@ -81,6 +81,7 @@ The subscriber refuses to start a live connection when `K_SERVICE` or `CLOUD_RUN
 | Subscriber | `worker/pipeline/live_subscriber.py` negotiates SignalR Core, subscribes to the topics above, and appends every message to `~/.local/share/interval/live/<timestamp>-live.jsonl`. |
 | Merged state | `worker/pipeline/timing_state.py` deep-merges `TimingData` and writes `timing-snapshot.json` in that same directory. |
 | Replay | `python worker/pipeline/live_subscriber.py --replay <file.jsonl>` rebuilds the snapshot and `live-laps.json` offline. |
+| Finished session | `python worker/pipeline/live_archive.py --path <Index.json Path>` reads the official `StreamPath` files and writes `laps_live` and `telemetry_live`. |
 | Completed laps | `worker/pipeline/live_laps.py` appends each finished lap to `live-laps.json` and inserts it into `f1-data-library.f1_data_library_DS.laps_live`. `/live/laps` lists that file, newest first. |
 | Telemetry | `worker/pipeline/live_telemetry.py` merges `CarData.z` and `Position.z` onto a 0.5 s grid and inserts those rows into `telemetry_live`. |
 

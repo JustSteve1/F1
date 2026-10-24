@@ -360,6 +360,12 @@ class TelemetryLog:
             f"{row.get('lap_number')}-{float(row.get('lap_time_sec') or 0):.1f}"
         )
 
+    def _append_local(self, rows: list[dict[str, Any]]) -> None:
+        path = self.directory / "telemetry-live.jsonl"
+        with path.open("a", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, separators=(",", ":"), default=str) + "\n")
+
     def _queue(self, rows: list[dict[str, Any]]) -> None:
         with self._lock:
             for row in rows:
@@ -376,6 +382,7 @@ class TelemetryLog:
         if not rows:
             return 0
         if not self._bq_ready or self._client is None:
+            self._append_local(rows)
             self.inserted += len(rows)
             return len(rows)
         written = 0
