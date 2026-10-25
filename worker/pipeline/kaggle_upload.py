@@ -1,9 +1,9 @@
 """
 Kaggle Upload — F1 lap data from BigQuery → Kaggle dataset
 
-Pulls all laps + telemetry from BigQuery, deduplicates against the current
-Kaggle CSV, appends only new rows, and uploads a single cumulative file as
-a new dataset version with usability metadata.
+Pulls laps from the laps_for_export view, replaces matching Kaggle rows
+with that view, keeps rows that exist only on Kaggle, and uploads one
+cumulative file as a new dataset version with usability metadata.
 
 Usage:
     python kaggle_upload.py
@@ -32,6 +32,7 @@ import pandas as pd
 from google.cloud import bigquery
 from kaggle.api.kaggle_api_extended import KaggleApi
 
+import kaggle_merge
 from kaggle_metadata import (
     KAGGLE_CSV_NAME,
     KAGGLE_DATASET_LEGACY,
@@ -188,30 +189,14 @@ def download_current_kaggle_data(api: KaggleApi) -> pd.DataFrame:
 # ── Step 2: Query BigQuery for all laps ───────────────────────────────────────
 
 def fetch_bq_laps(client: bigquery.Client) -> pd.DataFrame:
-    """Fetch lap-level data from BigQuery, joining laps + sessions for circuit name."""
-    print("  Querying BigQuery laps…")
-    query = f"""
-        SELECT
-            l.season,
-            s.event_name,
-            COALESCE(s.circuit, s.event_name) AS circuit,
-            s.session_type,
-            l.driver_code                     AS driver,
-            CAST(l.driver_number AS INT64)    AS driver_number,
-            CAST(l.lap_number    AS INT64)    AS lap_number,
-            l.lap_duration,
-            l.compound,
-            l.tyre_age_laps                   AS tyre_age,
-            l.stint_number,
-            l.session_key
-        FROM `{PROJECT}.{DATASET}.laps` l
-        JOIN (
-            SELECT DISTINCT session_key, event_name, circuit, session_type
-            FROM `{PROJECT}.{DATASET}.sessions`
-        ) s ON l.session_key = s.session_key
-        WHERE l.driver_code IS NOT NULL
-          AND l.lap_number  IS NOT NULL
+    """Fetch the Kaggle-shaped laps_for_export view.
+
+    A session comes entirely from laps_all_live or entirely from
+    laps_all_legacy. Telemetry is never taken from the other source.
     """
+    print("  Querying BigQuery laps_for_export…")
+    columns = ", ".join(kaggle_merge.KAGGLE_COLUMNS)
+    query = f"SELECT {columns} FROM `{PROJECT}.{DATASET}.laps_for_export`"
     df = client.query(query).to_dataframe()
     print(f"  ✅  {len(df):,} laps fetched from BigQuery")
     return df
@@ -247,6 +232,25 @@ def fetch_ready_kaggle_laps(client: bigquery.Client) -> pd.DataFrame:
         return pd.DataFrame()
     print(f"  ✅  {len(df):,} ready-made Kaggle rows from laps_kaggle")
     return df
+
+
+def _records(df: pd.DataFrame | None) -> list[dict]:
+    if df is None or df.empty:
+        return []
+    return df.to_dict("records")
+
+
+def combine_kaggle_export(existing_df: pd.DataFrame, view_df: pd.DataFrame) -> pd.DataFrame:
+    """Replace Kaggle rows with the view. Keep Kaggle rows the view does not have."""
+    rows = kaggle_merge.combine_kaggle_rows(_records(existing_df), _records(view_df))
+    columns = list(kaggle_merge.KAGGLE_COLUMNS)
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows)[columns]
+
+
+def export_unchanged(existing_df: pd.DataFrame, combined_df: pd.DataFrame) -> bool:
+    return kaggle_merge.rows_unchanged(_records(existing_df), _records(combined_df))
 
 
 # ── Step 3: Find new rows ─────────────────────────────────────────────────────
@@ -506,35 +510,20 @@ def run_kaggle_upload(*, republish: bool = False, metadata_only: bool = False) -
     existing_df = download_current_kaggle_data(api)
 
     print("\n── Step 2: Fetch laps from BigQuery…")
-    ready_df = fetch_ready_kaggle_laps(bq)
-    bq_laps = fetch_bq_laps(bq)
-    if ready_df.empty and bq_laps.empty:
+    view_df = fetch_bq_laps(bq)
+    if view_df.empty:
+        view_df = fetch_ready_kaggle_laps(bq)
+    if view_df.empty and existing_df.empty:
         print("  No laps in BigQuery. Nothing to upload.")
         return
 
-    print("\n── Step 3: Identify new laps…")
-    new_ready = find_new_laps(ready_df, existing_df) if not ready_df.empty else ready_df
-    new_laps = find_new_laps(bq_laps, existing_df) if not bq_laps.empty else bq_laps
-    if new_ready.empty and new_laps.empty and not republish:
+    print("\n── Step 3: Merge with the current Kaggle file…")
+    combined = combine_kaggle_export(existing_df, view_df)
+    if export_unchanged(existing_df, combined) and not republish:
         print("  Nothing new to upload. Kaggle dataset is already up to date.")
         return
-
-    combined = existing_df
-    if not new_ready.empty:
-        print(f"  Appending {len(new_ready):,} ready-made export rows (incl. US GP FP3 when present).")
-        combined = combine_kaggle_frames(combined, new_ready)
-    if new_laps.empty and new_ready.empty:
+    if export_unchanged(existing_df, combined) and republish:
         print("  Republish requested — re-uploading current laps with metadata.")
-        if combined.empty:
-            telemetry_df = fetch_telemetry_for_laps(bq, bq_laps)
-            combined = build_kaggle_rows(bq_laps, telemetry_df)
-    elif not new_laps.empty:
-        print("\n── Step 4: Fetch telemetry for new laps…")
-        telemetry_df = fetch_telemetry_for_laps(bq, new_laps)
-        print("\n── Step 5: Build Kaggle rows…")
-        new_kaggle_rows = build_kaggle_rows(new_laps, telemetry_df)
-        print(f"  ✅  {len(new_kaggle_rows):,} rows built")
-        combined = combine_kaggle_frames(combined, new_kaggle_rows)
 
     print(f"  ✅  Total rows for upload: {len(combined):,}")
     print("\n── Step 6: Upload to Kaggle…")
