@@ -73,11 +73,14 @@ Do not run the live subscriber on Cloud Run. Livetiming blocks datacenter IPs, s
 
 The subscriber refuses to start a live connection when `K_SERVICE` or `CLOUD_RUN_JOB` is set. Replaying a local JSONL archive does not open the hub, so that command is allowed on any host.
 
+The same applies to the bearer. A cloud agent VM can hold a token for one run, but the VM is recycled afterwards and cannot reach the hub, so the token and the watcher belong on the home machine. [auth-v2.md](./auth-v2.md) covers how that token is kept alive there.
+
 ## Spike
 
 | Piece | Where |
 | --- | --- |
-| Bearer file | `worker/pipeline/live_token.py` writes `~/.config/interval/f1-subscription-token` (mode 600). Override with `F1_SUBSCRIPTION_TOKEN_FILE`. |
+| Bearer file | `worker/pipeline/live_token.py` writes `~/.config/interval/f1-subscription-token` (mode 600). Override with `F1_SUBSCRIPTION_TOKEN_FILE`. `ensure` renews it through the account session or signs in with stored credentials; see [auth-v2.md](./auth-v2.md). |
+| Session watcher | `worker/pipeline/live_watch.py` starts the subscriber an hour before each session on the FastF1 schedule, restarts it when the hub drops the socket, stops it when `SessionStatus` finishes, and reports through `worker/pipeline/notify.py`. `/api/live-status` and the strip on `/live` show its state. |
 | Subscriber | `worker/pipeline/live_subscriber.py` negotiates SignalR Core, subscribes to the topics above, and appends every message to `~/.local/share/interval/live/<timestamp>-live.jsonl`. |
 | Merged state | `worker/pipeline/timing_state.py` deep-merges `TimingData` and writes `timing-snapshot.json` in that same directory. |
 | Replay | `python worker/pipeline/live_subscriber.py --replay <file.jsonl>` rebuilds the snapshot and `live-laps.json` offline. |

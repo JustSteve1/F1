@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd template for the live session watcher (docs/auth-v2.md).
+
+  1. Replace /Users/YOU and the repo path.
+  2. Pick one credential source for tier-2 sign-in, or delete the F1_* keys
+     to run renew-only (a browser sign-in is then needed about once a month).
+  3. cp to ~/Library/LaunchAgents/ and `launchctl bootstrap gui/$(id -u) <file>`.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.interval.live-watch</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-s</string>
+    <string>/usr/bin/python3</string>
+    <string>/Users/YOU/code/F1/worker/pipeline/live_watch.py</string>
+    <string>--lead-minutes</string>
+    <string>60</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/YOU/code/F1</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <!-- BigQuery writer for laps_live / telemetry_live -->
+    <key>GOOGLE_APPLICATION_CREDENTIALS</key>
+    <string>/Users/YOU/.config/gcloud/interval-jobs-worker.json</string>
+    <!-- Where the subscriber archive, snapshot, status, and events live -->
+    <key>INTERVAL_LIVE_DIR</key>
+    <string>/Users/YOU/.local/share/interval/live</string>
+    <!-- Slack or Discord incoming webhook; delete to disable -->
+    <key>INTERVAL_NOTIFY_WEBHOOK</key>
+    <string>https://hooks.slack.com/services/REPLACE/ME</string>
+    <key>INTERVAL_NOTIFY_DESKTOP</key>
+    <string>1</string>
+    <!-- Tier-2 sign-in. Prefer the keychain item instead of these two:
+         security add-generic-password -s interval-f1-account -a you@example.com -w -->
+    <!--
+    <key>F1_USERNAME</key>
+    <string>you@example.com</string>
+    <key>F1_PASSWORD</key>
+    <string>REPLACE_ME</string>
+    -->
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/.local/share/interval/live/watcher.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/.local/share/interval/live/watcher.log</string>
+</dict>
+</plist>
