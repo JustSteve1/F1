@@ -44,6 +44,7 @@ next-env.d.ts
 # python worker
 worker/.venv/
 worker/**/__pycache__/
+hackathon/**/__pycache__/
 
 # GCP bootstrap / reader keys — never commit
 /tmp/gcp-bootstrap.json
