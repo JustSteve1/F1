@@ -22,13 +22,14 @@ class IsKaggleLapsCsvTests(unittest.TestCase):
 
 
 class DatasetHandleTests(unittest.TestCase):
-    def test_default_slug_is_formula_one_topic(self) -> None:
+    def test_default_slug_stays_on_the_live_listing(self) -> None:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("KAGGLE_DATASET", None)
-            self.assertEqual(meta.kaggle_dataset(), "stevefza/formula-one-all-laps-telemetry")
-            candidates = meta.dataset_handle_candidates()
-            self.assertEqual(candidates[0], "stevefza/formula-one-all-laps-telemetry")
-            self.assertIn(meta.KAGGLE_DATASET_LEGACY, candidates)
+            self.assertEqual(meta.kaggle_dataset(), "stevefza/f1-2026-bahrain-testing-day-2")
+            self.assertEqual(
+                meta.dataset_handle_candidates(),
+                ["stevefza/f1-2026-bahrain-testing-day-2"],
+            )
 
     def test_env_override_still_falls_back_to_legacy(self) -> None:
         with patch.dict(os.environ, {"KAGGLE_DATASET": "stevefza/custom-slug"}):
@@ -101,7 +102,7 @@ class MetadataBuilderTests(unittest.TestCase):
 
 class MetadataFileTests(unittest.TestCase):
     def test_version_and_update_files_are_json_objects(self) -> None:
-        payload = {"id": "stevefza/formula-one-all-laps-telemetry"}
+        payload = {"id": "stevefza/f1-2026-bahrain-testing-day-2"}
         with tempfile.TemporaryDirectory() as tmp:
             version_path = Path(tmp) / "dataset-metadata.json"
             meta.write_metadata_file(version_path, payload)

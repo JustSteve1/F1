@@ -1,8 +1,8 @@
 """
 Kaggle dataset identity and usability metadata.
 
-Slug convention: formula-one-<topic> (matches formula-one-2026-china-gp-energy-management).
 File convention: stable all_laps.csv so file/column descriptions survive each version.
+The public URL stays stevefza/f1-2026-bahrain-testing-day-2 (dataset id 9485317).
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 KAGGLE_CSV_NAME = "all_laps.csv"
-KAGGLE_DATASET_DEFAULT = "stevefza/formula-one-all-laps-telemetry"
-KAGGLE_DATASET_LEGACY = "stevefza/f1-2026-bahrain-testing-day-2"
+KAGGLE_DATASET_DEFAULT = "stevefza/f1-2026-bahrain-testing-day-2"
+KAGGLE_DATASET_LEGACY = KAGGLE_DATASET_DEFAULT
 KAGGLE_DATASET_ID_DEFAULT = 9485317
 # Locked to the existing public listing so votes/downloads cannot move to a new slug.
 KAGGLE_DATASET_ID_LOCKED = 9485317
@@ -142,7 +142,7 @@ def kaggle_keywords() -> list[str]:
 
 
 def dataset_handle_candidates() -> list[str]:
-    """New slug first, then the live Bahrain-testing slug until Kaggle Settings is renamed."""
+    """Live listing first. KAGGLE_DATASET overrides the handle but still falls back to it."""
     seen: list[str] = []
     for ref in (kaggle_dataset(), KAGGLE_DATASET_LEGACY):
         if ref and ref not in seen:
@@ -190,7 +190,7 @@ def build_dataset_metadata(
     # Version `id` must be the live listing. A new slug here without id_no
     # would create a second dataset and zero the stats.
     metadata: dict[str, Any] = {
-        "id": live_handle or KAGGLE_DATASET_LEGACY,
+        "id": live_handle or kaggle_dataset(),
         "id_no": require_existing_dataset_id(),
         "title": (existing.get("title") or KAGGLE_TITLE_DEFAULT).strip() or KAGGLE_TITLE_DEFAULT,
         "subtitle": subtitle,

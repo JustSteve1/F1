@@ -8,12 +8,20 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.modules.setdefault("fastf1", MagicMock())
-sys.modules.setdefault("numpy", MagicMock())
-sys.modules.setdefault("pandas", MagicMock())
-sys.modules.setdefault("google.cloud.bigquery", MagicMock())
-sys.modules.setdefault("google", MagicMock())
-sys.modules.setdefault("google.cloud", MagicMock())
+
+
+def _import_or_stub(name: str) -> None:
+    """Keep a missing optional dependency from blocking the skip-existing tests."""
+    if name in sys.modules and not isinstance(sys.modules[name], MagicMock):
+        return
+    try:
+        __import__(name)
+    except ImportError:
+        sys.modules[name] = MagicMock()
+
+
+for _module_name in ("fastf1", "numpy", "pandas", "google.cloud.bigquery"):
+    _import_or_stub(_module_name)
 
 import f1_telemetry_import as pipe  # noqa: E402
 
