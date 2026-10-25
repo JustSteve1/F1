@@ -78,11 +78,11 @@ Also set:
 |-----|---------|---------|
 | `KAGGLE_DATASET` | `stevefza/f1-2026-bahrain-testing-day-2` | Existing public handle (do not point this at a new slug) |
 | `KAGGLE_DATASET_ID` | `9485317` | Existing dataset id so versions stay on the current listing |
-| `KAGGLE_LICENSE` | `CC-BY-4.0` | Named license (required for usability 10.0; `Other` does not count) |
+| `KAGGLE_LICENSE` | `CC-BY-SA-3.0` | Named license Kaggle's client accepts (`CC-BY-4.0` makes the client exit before settings are saved) |
 | `KAGGLE_KEYWORDS` | `sports,time series analysis,tabular,beginner` | Existing Kaggle tags |
 | `KAGGLE_REPUBLISH` | unset | Set `1` to re-push `all_laps.csv` + metadata when there are no new laps |
 
-**Existing listing is locked.** Every upload writes stable `all_laps.csv` plus `dataset-metadata.json` (CC-BY-4.0, the four tags, provenance, weekly cadence, file description, and 13 column fields) and publishes with `KaggleApi.dataset_create_version` then `dataset_metadata_update`. Dataset id `9485317` and handle `stevefza/f1-2026-bahrain-testing-day-2` stay put so votes and downloads do not move. The date stays in the version notes only.
+**Existing listing is locked.** Every upload writes stable `all_laps.csv` plus `dataset-metadata.json` (CC-BY-SA-3.0, the four tags, provenance, weekly cadence, file description, and 13 column fields typed `string` or `numeric`) and publishes with `KaggleApi.dataset_create_version` then `dataset_metadata_update`. The job reads the listing back and fails if the file name or those fields are empty. It does not upload a second version to repair that. Dataset id `9485317` stays put so votes and downloads do not move when the slug is renamed. The worker resolves the live handle from that id. The date stays in the version notes only. A dated CSV name, or a version call with an empty description, clears the score.
 
 **Current Cloud Run setup:** `KAGGLE_API_TOKEN` ← `kaggle-api-token:latest`. Upload writes stable `all_laps.csv` plus `dataset-metadata.json`, then calls `KaggleApi.dataset_create_version` and `dataset_metadata_update` (license, tags, provenance, file/column descriptions).
 
@@ -114,7 +114,7 @@ gcloud secrets add-iam-policy-binding kaggle-api-token \
 gcloud run jobs update $JOB \
   --project=$PROJECT --region=$REGION \
   --update-secrets=KAGGLE_API_TOKEN=kaggle-api-token:latest \
-  --update-env-vars=KAGGLE_DATASET=stevefza/f1-2026-bahrain-testing-day-2,KAGGLE_DATASET_ID=9485317,KAGGLE_LICENSE=CC-BY-4.0 \
+  --update-env-vars=KAGGLE_DATASET=stevefza/f1-2026-bahrain-testing-day-2,KAGGLE_DATASET_ID=9485317,KAGGLE_LICENSE=CC-BY-SA-3.0 \
   --remove-secrets=KAGGLE_USERNAME,KAGGLE_KEY
 ```
 
@@ -154,7 +154,7 @@ done
 gcloud run jobs update $JOB \
   --project=$PROJECT --region=$REGION \
   --update-secrets=KAGGLE_USERNAME=kaggle-username:latest,KAGGLE_KEY=kaggle-key:latest \
-  --update-env-vars=KAGGLE_DATASET=stevefza/f1-2026-bahrain-testing-day-2,KAGGLE_DATASET_ID=9485317,KAGGLE_LICENSE=CC-BY-4.0
+  --update-env-vars=KAGGLE_DATASET=stevefza/f1-2026-bahrain-testing-day-2,KAGGLE_DATASET_ID=9485317,KAGGLE_LICENSE=CC-BY-SA-3.0
 ```
 
 Never commit `kaggle.json`, tokens, or secret values.

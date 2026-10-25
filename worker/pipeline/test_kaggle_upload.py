@@ -42,7 +42,7 @@ class MetadataBuilderTests(unittest.TestCase):
 
         self.assertEqual(built["id"], "stevefza/f1-2026-bahrain-testing-day-2")
         self.assertEqual(built["id_no"], 9485317)
-        self.assertEqual(built["licenses"], [{"name": "CC-BY-4.0"}])
+        self.assertEqual(built["licenses"], [{"name": "CC-BY-SA-3.0"}])
         self.assertEqual(
             built["keywords"],
             ["sports", "time series analysis", "tabular", "beginner"],
@@ -100,6 +100,11 @@ class UploadToKaggleTests(unittest.TestCase):
                         "description": "# Live card",
                     },
                 ),
+                patch.object(
+                    upload,
+                    "assert_live_card",
+                    return_value={"usability": 1.0, "csv_name": "all_laps.csv"},
+                ),
             ):
                 upload.upload_to_kaggle(frame, api=api)
 
@@ -108,7 +113,7 @@ class UploadToKaggleTests(unittest.TestCase):
             {"all_laps.csv", "dataset-metadata.json"},
         )
         self.assertEqual(captured["header"].split(","), COLUMN_ORDER)
-        self.assertEqual(captured["meta"]["licenses"], [{"name": "CC-BY-4.0"}])
+        self.assertEqual(captured["meta"]["licenses"], [{"name": "CC-BY-SA-3.0"}])
         self.assertEqual(captured["meta"]["resources"][0]["path"], "all_laps.csv")
         self.assertEqual(
             [field["name"] for field in captured["meta"]["resources"][0]["schema"]["fields"]],
@@ -122,6 +127,61 @@ class UploadToKaggleTests(unittest.TestCase):
         )
         api.dataset_create_version.assert_called_once()
         api.dataset_metadata_update.assert_called_once()
+        types = {
+            field["name"]: field["type"]
+            for field in captured["meta"]["resources"][0]["schema"]["fields"]
+        }
+        self.assertEqual(types["season"], "numeric")
+        self.assertEqual(types["telemetry"], "string")
+
+
+class CardReadbackTests(unittest.TestCase):
+    def test_missing_file_name_and_columns_fail_closed(self) -> None:
+        problems = upload.card_problems(
+            {
+                "description": "overview",
+                "keywords": ["sports"],
+                "license": "CC BY-SA 3.0",
+                "provenance": "FastF1",
+                "csv_name": "All Laps - 24 October 2026.csv",
+                "file_description": "",
+                "columns": [],
+            }
+        )
+        self.assertIn("file name 'All Laps - 24 October 2026.csv'", problems)
+        self.assertIn("file description", problems)
+        self.assertTrue(any(item.startswith("column descriptions") for item in problems))
+
+    def test_complete_card_has_no_problems(self) -> None:
+        problems = upload.card_problems(
+            {
+                "description": "overview",
+                "keywords": ["sports"],
+                "license": "CC BY-SA 3.0",
+                "provenance": "FastF1",
+                "csv_name": "all_laps.csv",
+                "file_description": "One row per lap",
+                "columns": [
+                    {"name": field["name"], "description": field["description"]}
+                    for field in meta.COLUMN_FIELDS
+                ],
+            }
+        )
+        self.assertEqual(problems, [])
+
+    def test_id_lookup_returns_the_renamed_slug(self) -> None:
+        match = MagicMock()
+        match.id = 9485317
+        match.ref = "stevefza/formula-one-all-laps-telemetry"
+        other = MagicMock()
+        other.id = 1
+        other.ref = "stevefza/other"
+        api = MagicMock()
+        api.dataset_list.return_value = [other, match]
+        self.assertEqual(
+            upload.lookup_handle_by_dataset_id(api, 9485317),
+            "stevefza/formula-one-all-laps-telemetry",
+        )
 
 
 if __name__ == "__main__":

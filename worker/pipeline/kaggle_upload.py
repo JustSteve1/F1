@@ -91,8 +91,24 @@ def build_telemetry_json(points_df: pd.DataFrame) -> str:
 
 # ── Step 1: Download current Kaggle CSV ───────────────────────────────────────
 
+def lookup_handle_by_dataset_id(api: KaggleApi, dataset_id: int) -> str | None:
+    """Find owner/slug for a dataset id after the public slug is renamed."""
+    for page in range(1, 6):
+        listed = api.dataset_list(mine=True, page=page) or []
+        if not listed:
+            return None
+        for item in listed:
+            item_id = getattr(item, "id", None)
+            ref = getattr(item, "ref", None)
+            if item_id == dataset_id and ref:
+                return str(ref)
+        if len(listed) < 20:
+            return None
+    return None
+
+
 def resolve_dataset_handle(api: KaggleApi) -> str:
-    """Prefer the new slug; fall back to the live listing until Kaggle Settings is renamed."""
+    """Use a working slug, then the listing id, so a Settings rename still hits 9485317."""
     last_error: Exception | None = None
     for ref in dataset_handle_candidates():
         try:
@@ -101,6 +117,15 @@ def resolve_dataset_handle(api: KaggleApi) -> str:
         except Exception as exc:  # noqa: BLE001 — try the next public handle
             last_error = exc
             print(f"  Kaggle handle {ref} not reachable ({exc})")
+    dataset_id = require_existing_dataset_id()
+    try:
+        found = lookup_handle_by_dataset_id(api, dataset_id)
+    except Exception as exc:  # noqa: BLE001 — fall back to the configured handle
+        found = None
+        print(f"  Dataset id lookup failed ({exc})")
+    if found:
+        print(f"  Resolved dataset {dataset_id} to {found}")
+        return found
     if last_error is not None:
         print(f"  Using {kaggle_dataset()} after handle lookup failed")
     return kaggle_dataset()
@@ -445,6 +470,120 @@ def apply_kaggle_metadata(api: KaggleApi, handle: str, columns: list[str] | None
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _file_attr(item, name: str):
+    if isinstance(item, dict):
+        return item.get(name)
+    return getattr(item, name, None)
+
+
+def read_live_card(api: KaggleApi, handle: str) -> dict:
+    """Read the fields that make up the usability score."""
+    from kagglesdk.datasets.types.dataset_api_service import (
+        ApiGetDatasetMetadataRequest,
+        ApiGetDatasetRequest,
+    )
+
+    owner, slug = handle.split("/", 1)
+    with api.build_kaggle_client() as kaggle:
+        view = ApiGetDatasetRequest()
+        view.owner_slug = owner
+        view.dataset_slug = slug
+        dataset = kaggle.datasets.dataset_api_client.get_dataset(view)
+        meta_req = ApiGetDatasetMetadataRequest()
+        meta_req.owner_slug = owner
+        meta_req.dataset_slug = slug
+        metadata = kaggle.datasets.dataset_api_client.get_dataset_metadata(meta_req)
+
+    info = metadata.info
+    tags = []
+    for tag in dataset.tags or []:
+        tag_name = _file_attr(tag, "name") or _file_attr(tag, "ref")
+        if tag_name:
+            tags.append(str(tag_name))
+
+    listing = api.dataset_list_files(handle)
+    files = getattr(listing, "dataset_files", None) or getattr(listing, "files", None) or []
+    csv_name = None
+    file_description = None
+    columns: list[dict[str, str]] = []
+    for item in files:
+        name = _file_attr(item, "name")
+        if not name or not str(name).lower().endswith(".csv"):
+            continue
+        csv_name = str(name)
+        file_description = _file_attr(item, "description") or ""
+        raw_columns = _file_attr(item, "columns") or []
+        for column in raw_columns:
+            columns.append(
+                {
+                    "name": str(_file_attr(column, "name") or ""),
+                    "description": str(_file_attr(column, "description") or ""),
+                }
+            )
+        break
+
+    return {
+        "description": (dataset.description or "").strip(),
+        "keywords": tags,
+        "license": (dataset.license_name or "").strip(),
+        "provenance": (info.user_specified_sources or "").strip() if info else "",
+        "update_frequency": (info.expected_update_frequency or "").strip() if info else "",
+        "csv_name": csv_name,
+        "file_description": (file_description or "").strip(),
+        "columns": columns,
+        "usability": float(dataset.usability_rating or 0.0),
+    }
+
+
+def card_problems(card: dict) -> list[str]:
+    """Names of usability fields that a version upload must not leave empty."""
+    problems: list[str] = []
+    if not card.get("description"):
+        problems.append("description")
+    if not card.get("keywords"):
+        problems.append("tags")
+    if not card.get("license"):
+        problems.append("license")
+    if not card.get("provenance"):
+        problems.append("provenance")
+    if card.get("csv_name") != KAGGLE_CSV_NAME:
+        problems.append(f"file name {card.get('csv_name')!r}")
+    if not card.get("file_description"):
+        problems.append("file description")
+    described = [column for column in card.get("columns") or [] if column.get("description")]
+    if len(described) < len(COLUMN_ORDER_EXPECTED()):
+        problems.append(f"column descriptions ({len(described)})")
+    return problems
+
+
+def COLUMN_ORDER_EXPECTED() -> list[str]:
+    from kaggle_metadata import COLUMN_FIELDS
+
+    return [field["name"] for field in COLUMN_FIELDS]
+
+
+def assert_live_card(api: KaggleApi, handle: str, *, attempts: int = 6, pause_seconds: int = 30) -> dict:
+    """Re-read the listing after upload. Do not publish another version."""
+    import time
+
+    card: dict = {}
+    problems: list[str] = []
+    for attempt in range(1, attempts + 1):
+        card = read_live_card(api, handle)
+        problems = card_problems(card)
+        print(
+            f"  Readback {attempt}/{attempts}: usability={card.get('usability')} "
+            f"file={card.get('csv_name')!r} missing={problems or 'none'}"
+        )
+        if not problems:
+            return card
+        if attempt < attempts:
+            time.sleep(pause_seconds)
+    raise RuntimeError(
+        "Kaggle listing is missing usability fields after upload: " + ", ".join(problems)
+    )
+
+
 def upload_to_kaggle(combined_df: pd.DataFrame, api: KaggleApi | None = None):
     """Save all_laps.csv and publish a version plus usability metadata."""
     require_existing_dataset_id()
@@ -481,7 +620,11 @@ def upload_to_kaggle(combined_df: pd.DataFrame, api: KaggleApi | None = None):
             # Current Kaggle client exit(1)s on a rejected license name.
             print("  Named license was rejected; retrying standard license names…")
             apply_kaggle_metadata(api, handle, columns=list(combined_df.columns))
-        print(f"  ✅  Uploaded {KAGGLE_CSV_NAME} with usability metadata")
+        card = assert_live_card(api, handle)
+        print(
+            f"  ✅  Uploaded {KAGGLE_CSV_NAME} with usability metadata "
+            f"(usability={card.get('usability')})"
+        )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 

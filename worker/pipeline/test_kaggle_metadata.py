@@ -49,7 +49,12 @@ class MetadataBuilderTests(unittest.TestCase):
 
         self.assertEqual(built["id"], meta.KAGGLE_DATASET_LEGACY)
         self.assertEqual(built["id_no"], 9485317)
-        self.assertEqual(built["licenses"], [{"name": "CC-BY-4.0"}])
+        self.assertEqual(built["licenses"], [{"name": "CC-BY-SA-3.0"}])
+        types = {field["name"]: field["type"] for field in built["resources"][0]["schema"]["fields"]}
+        self.assertEqual(types["season"], "numeric")
+        self.assertEqual(types["lap_duration"], "numeric")
+        self.assertEqual(types["driver"], "string")
+        self.assertTrue(all(field_type in {"string", "numeric"} for field_type in types.values()))
         self.assertEqual(
             built["keywords"],
             ["sports", "time series analysis", "tabular", "beginner"],
@@ -92,6 +97,13 @@ class MetadataBuilderTests(unittest.TestCase):
         built = meta.build_dataset_metadata(live_handle="stevefza/f1-2026-bahrain-testing-day-2")
         self.assertEqual(built["id"], "stevefza/f1-2026-bahrain-testing-day-2")
         self.assertEqual(built["id_no"], 9485317)
+
+    def test_license_candidates_try_the_accepted_name_first(self) -> None:
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("KAGGLE_LICENSE", None)
+            self.assertEqual(meta.kaggle_license_candidates()[0], "CC-BY-SA-3.0")
+            self.assertNotIn("Integer", {field["type"] for field in meta.COLUMN_FIELDS})
+            self.assertNotIn("Decimal", {field["type"] for field in meta.COLUMN_FIELDS})
 
     def test_refuses_upload_to_a_different_dataset_id(self) -> None:
         with patch.dict(os.environ, {"KAGGLE_DATASET_ID": "1"}):
