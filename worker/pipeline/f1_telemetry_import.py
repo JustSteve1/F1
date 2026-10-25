@@ -104,12 +104,12 @@ def upload_in_batches(client, table_ref, rows, batch_size=1000, label="rows"):
 
 # ── Step 1: Check existing data ───────────────────────────────────────────────
 
-def check_existing(client, years, race, session_types):
+def _session_presence(client, table: str, years, race, session_types):
     year_list = ", ".join(map(str, years))
     session_list = ", ".join(f"'{s}'" for s in session_types)
     query = f"""
         SELECT DISTINCT season, session_type
-        FROM `{PROJECT}.{DATASET}.telemetry`
+        FROM `{PROJECT}.{DATASET}.{table}`
         WHERE season IN ({year_list})
           AND event_name = '{race}'
           AND session_type IN ({session_list})
@@ -119,6 +119,17 @@ def check_existing(client, years, race, session_types):
         return {(int(r["season"]), r["session_type"]): True for _, r in df.iterrows()}
     except Exception:
         return {}
+
+
+def check_live_existing(client, years, race, session_types):
+    """Sessions already captured live. FastF1 must not import these again."""
+    return _session_presence(client, "laps_live", years, race, session_types)
+
+
+def check_existing(client, years, race, session_types):
+    found = _session_presence(client, "telemetry", years, race, session_types)
+    found.update(check_live_existing(client, years, race, session_types))
+    return found
 
 
 # ── Step 2: Load FastF1 sessions ──────────────────────────────────────────────
@@ -257,7 +268,7 @@ def load_sessions(years, race, session_types, skip_existing, existing):
         for stype in session_types:
             key = (year, stype)
             if skip_existing and key in existing:
-                print(f"  ⏭  Skipping {year} {stype} — already in BigQuery")
+                print(f"  ⏭  Skipping {year} {stype} — already in BigQuery (batch or live)")
                 continue
             try:
                 session = _load_session_with_retries(year, race, stype)
