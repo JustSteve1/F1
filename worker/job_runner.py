@@ -215,7 +215,7 @@ def _real_pipeline(job_id: str, params: dict[str, Any]) -> None:
             if skip_existing and already and already == requested:
                 db.append_log(
                     job_id,
-                    "All requested sessions already in BigQuery — skipping FastF1 import",
+                    "All requested sessions already in BigQuery (batch or live) — skipping FastF1 import",
                 )
                 state["loaded"] = {}
                 state["skip_all_existing"] = True

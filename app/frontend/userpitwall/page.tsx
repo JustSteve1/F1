@@ -1,12 +1,12 @@
 "use client";
 
 import { DashboardShell } from "@/components/layout/DashboardShell";
-import { PitwallDashboard } from "@/front-end/pitwall/PitwallDashboard";
+import { LiveTimingBoard } from "@/front-end/live/LiveTimingBoard";
 
 export default function UserPitwallPage() {
     return (
         <DashboardShell>
-            <PitwallDashboard />
+            <LiveTimingBoard />
         </DashboardShell>
     );
 }
