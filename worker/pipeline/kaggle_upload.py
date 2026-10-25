@@ -620,7 +620,7 @@ def upload_to_kaggle(combined_df: pd.DataFrame, api: KaggleApi | None = None):
             # Current Kaggle client exit(1)s on a rejected license name.
             print("  Named license was rejected; retrying standard license names…")
             apply_kaggle_metadata(api, handle, columns=list(combined_df.columns))
-        card = assert_live_card(api, handle)
+        card = assert_live_card(api, handle, attempts=12, pause_seconds=30)
         print(
             f"  ✅  Uploaded {KAGGLE_CSV_NAME} with usability metadata "
             f"(usability={card.get('usability')})"
