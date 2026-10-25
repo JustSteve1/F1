@@ -15,7 +15,7 @@ Auth:
                OR KAGGLE_USERNAME + KAGGLE_KEY
 
 Output file on Kaggle: all_laps.csv
-Dataset slug: stevefza/formula-one-all-laps-telemetry
+Dataset: stevefza/f1-2026-bahrain-testing-day-2 (id 9485317)
 """
 
 from __future__ import annotations
@@ -474,7 +474,13 @@ def upload_to_kaggle(combined_df: pd.DataFrame, api: KaggleApi | None = None):
         print(f"  Uploading → kaggle.com/datasets/{metadata['id']} (handle {handle})…")
         api.dataset_create_version(tmp_dir, notes, quiet=False, convert_to_csv=False)
 
-        apply_kaggle_metadata(api, handle, columns=list(combined_df.columns))
+        print("  Updating dataset settings (license, tags, provenance)…")
+        try:
+            api.dataset_metadata_update(handle, tmp_dir)
+        except SystemExit:
+            # Current Kaggle client exit(1)s on a rejected license name.
+            print("  Named license was rejected; retrying standard license names…")
+            apply_kaggle_metadata(api, handle, columns=list(combined_df.columns))
         print(f"  ✅  Uploaded {KAGGLE_CSV_NAME} with usability metadata")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
