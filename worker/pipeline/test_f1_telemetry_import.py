@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -68,13 +68,16 @@ class LiveSkipTests(unittest.TestCase):
     def test_a_live_session_is_treated_as_already_present(self) -> None:
         client = _Client(
             {
-                "telemetry": [_Row(2026, "FP1")],
+                "laps": [_Row(2026, "R")],
                 "laps_live": [_Row(2026, "Q")],
+                "telemetry": [_Row(2026, "FP1")],
             }
         )
         found = pipe.check_existing(client, [2026], "United States Grand Prix", ["FP1", "Q", "R"])
-        self.assertEqual(set(found), {(2026, "FP1"), (2026, "Q")})
+        self.assertEqual(set(found), {(2026, "R"), (2026, "Q")})
         self.assertTrue(any("laps_live" in query for query in client.queries))
+        self.assertTrue(any(".sessions`" in query for query in client.queries))
+        self.assertFalse(any(".telemetry`" in query for query in client.queries))
 
     def test_missing_live_table_does_not_block_the_batch_check(self) -> None:
         class BatchOnly(_Client):
@@ -83,9 +86,17 @@ class LiveSkipTests(unittest.TestCase):
                     raise RuntimeError("laps_live is not there")
                 return super().query(sql)
 
-        client = BatchOnly({"telemetry": [_Row(2026, "R")]})
+        client = BatchOnly({"laps": [_Row(2026, "R")]})
         found = pipe.check_existing(client, [2026], "United States Grand Prix", ["R"])
         self.assertEqual(set(found), {(2026, "R")})
+
+
+class BearerTests(unittest.TestCase):
+    def test_missing_bearer_fails_once(self) -> None:
+        with patch.object(pipe, "ensure_fastf1_auth", return_value="missing"):
+            with self.assertRaises(RuntimeError) as ctx:
+                pipe._load_session_with_retries(2026, "Mexico City Grand Prix", "R", attempts=5)
+        self.assertIn("bearer missing", str(ctx.exception).lower())
 
 
 if __name__ == "__main__":

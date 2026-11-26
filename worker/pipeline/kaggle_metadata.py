@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -150,6 +152,31 @@ def dataset_handle_candidates() -> list[str]:
     return seen
 
 
+def _year_label(season: Any) -> str:
+    try:
+        number = float(season)
+    except (TypeError, ValueError):
+        return str(season).strip()
+    if number == int(number):
+        return str(int(number))
+    return str(season).strip()
+
+
+def race_csv_name(season: Any, event_name: Any) -> str:
+    """Stable per-race filename. Accents are stripped so the slug stays ASCII.
+
+    ``2026`` and ``São Paulo Grand Prix`` become
+    ``2026_sao_paulo_grand_prix.csv``.
+    """
+    year = _year_label(season)
+    text = unicodedata.normalize("NFKD", str(event_name))
+    text = text.encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+    if not year or not slug:
+        raise ValueError(f"Cannot name a race file for {season!r} {event_name!r}")
+    return f"{year}_{slug}.csv"
+
+
 def is_kaggle_laps_csv(filename: str) -> bool:
     name = Path(filename).name
     if not name.lower().endswith(".csv"):
@@ -176,14 +203,25 @@ def schema_fields_for_columns(columns: Iterable[str]) -> list[dict[str, str]]:
     return fields
 
 
+def race_file_description(filename: str) -> str:
+    return (
+        "One row per lap for this race. Same columns as all_laps.csv, "
+        f"including the 2 Hz telemetry array. File: {filename}."
+    )
+
+
 def build_dataset_metadata(
     *,
     columns: Iterable[str] | None = None,
     existing: dict[str, Any] | None = None,
     live_handle: str | None = None,
+    race_files: Iterable[str] | None = None,
 ) -> dict[str, Any]:
     existing = existing or {}
     fields = schema_fields_for_columns(columns if columns is not None else [f["name"] for f in COLUMN_FIELDS])
+    file_entries = [(KAGGLE_CSV_NAME, KAGGLE_FILE_DESCRIPTION)]
+    for name in race_files or []:
+        file_entries.append((name, race_file_description(name)))
     subtitle = (existing.get("subtitle") or KAGGLE_SUBTITLE_DEFAULT).strip()
     if not (20 <= len(subtitle) <= 80):
         subtitle = KAGGLE_SUBTITLE_DEFAULT
@@ -200,17 +238,19 @@ def build_dataset_metadata(
         "userSpecifiedSources": KAGGLE_PROVENANCE,
         "resources": [
             {
-                "path": KAGGLE_CSV_NAME,
-                "description": KAGGLE_FILE_DESCRIPTION,
+                "path": path,
+                "description": description,
                 "schema": {"fields": fields},
             }
+            for path, description in file_entries
         ],
         "data": [
             {
-                "name": KAGGLE_CSV_NAME,
-                "description": KAGGLE_FILE_DESCRIPTION,
+                "name": path,
+                "description": description,
                 "columns": fields,
             }
+            for path, description in file_entries
         ],
     }
     description = existing.get("description")

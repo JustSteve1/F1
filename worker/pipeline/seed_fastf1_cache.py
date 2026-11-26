@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import fastf1  # noqa: E402
+import fastf1_auth  # noqa: E402
 import fastf1_cache_sync  # noqa: E402
 
 
@@ -51,6 +52,7 @@ def main() -> int:
     os.makedirs(cache_dir, exist_ok=True)
     fastf1.Cache.enable_cache(cache_dir)
     print(f"Cache dir: {cache_dir}")
+    print(f"FastF1 auth: {fastf1_auth.ensure_fastf1_auth()}")
 
     for stype in args.session:
         print(f"Loading {args.year} {args.race} {stype}…")

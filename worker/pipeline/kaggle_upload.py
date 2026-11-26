@@ -2,19 +2,20 @@
 Kaggle Upload — F1 lap data from BigQuery → Kaggle dataset
 
 Pulls laps from the laps_for_export view, replaces matching Kaggle rows
-with that view, keeps rows that exist only on Kaggle, and uploads one
-cumulative file as a new dataset version with usability metadata.
+with that view, keeps rows that exist only on Kaggle, and uploads
+all_laps.csv plus one CSV per race as a new dataset version.
 
 Usage:
     python kaggle_upload.py
     python kaggle_upload.py --republish
+    python kaggle_upload.py --prepare-dir /tmp/kaggle-version
 
 Auth:
     BigQuery : gcloud auth application-default login
     Kaggle   : KAGGLE_API_TOKEN (preferred) OR ~/.kaggle/kaggle.json
                OR KAGGLE_USERNAME + KAGGLE_KEY
 
-Output file on Kaggle: all_laps.csv
+Output files on Kaggle: all_laps.csv plus one CSV per race, same columns.
 Dataset: stevefza/f1-2026-bahrain-testing-day-2 (id 9485317)
 """
 
@@ -30,7 +31,6 @@ from pathlib import Path
 
 import pandas as pd
 from google.cloud import bigquery
-from kaggle.api.kaggle_api_extended import KaggleApi
 
 import kaggle_merge
 from kaggle_metadata import (
@@ -43,11 +43,19 @@ from kaggle_metadata import (
     kaggle_dataset,
     kaggle_license_candidates,
     load_metadata_file,
+    race_csv_name,
     require_existing_dataset_id,
     write_metadata_file,
 )
 
 # ── Config ────────────────────────────────────────────────────────────────────
+
+def _new_kaggle_api():
+    """Import Kaggle only when an upload actually needs it."""
+    from kaggle.api.kaggle_api_extended import KaggleApi
+
+    return KaggleApi()
+
 
 PROJECT = os.environ.get("BQ_PROJECT", "f1-data-library")
 DATASET = os.environ.get("BQ_DATASET", "f1_data_library_DS")
@@ -404,6 +412,91 @@ def ensure_kaggle_auth() -> None:
     )
 
 
+def race_export_frames(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
+    """One frame per season and event. The cumulative file is not included."""
+    if df is None or df.empty:
+        return []
+    if "season" not in df.columns or "event_name" not in df.columns:
+        return []
+    frames: list[tuple[str, pd.DataFrame]] = []
+    grouped = df.groupby(["season", "event_name"], dropna=False, sort=True)
+    for (season, event), part in grouped:
+        if event is None or (isinstance(event, float) and pd.isna(event)):
+            continue
+        if str(event).strip() == "":
+            continue
+        frames.append((race_csv_name(season, event), part.reset_index(drop=True)))
+    return frames
+
+
+def write_kaggle_version(
+    df: pd.DataFrame,
+    directory: str | Path,
+    *,
+    existing_card: dict | None = None,
+    live_handle: str | None = None,
+) -> Path:
+    """Write all_laps.csv, one CSV per race, and dataset-metadata.json.
+
+    A Kaggle version replaces the whole file set, so the race files are
+    written beside the cumulative file every time.
+    """
+    dest = Path(directory)
+    dest.mkdir(parents=True, exist_ok=True)
+    race_frames = race_export_frames(df)
+    df.to_csv(dest / KAGGLE_CSV_NAME, index=False)
+    for name, part in race_frames:
+        part.to_csv(dest / name, index=False)
+    metadata = build_dataset_metadata(
+        columns=list(df.columns),
+        existing=existing_card,
+        live_handle=live_handle,
+        race_files=[name for name, _ in race_frames],
+    )
+    write_metadata_file(dest / "dataset-metadata.json", metadata)
+    return dest
+
+
+def export_quality_report(df: pd.DataFrame) -> str:
+    """Text report for a local export. No upload."""
+    lines = ["===== KAGGLE EXPORT QUALITY ====="]
+    if df is None or df.empty:
+        lines.append("rows: 0")
+        lines.append("kaggle upload: not run")
+        lines.append("===== END REPORT =====")
+        return "\n".join(lines)
+    lines.append(f"rows: {len(df)}")
+    lines.append(f"columns: {', '.join(df.columns)}")
+    missing_cols = [column for column in kaggle_merge.KAGGLE_COLUMNS if column not in df.columns]
+    lines.append(f"missing columns: {missing_cols or 'none'}")
+    if {"season", "event_name", "session_type", "driver_number", "lap_number"}.issubset(df.columns):
+        dupes = int(df.duplicated(
+            ["season", "event_name", "session_type", "driver_number", "lap_number"]
+        ).sum())
+        lines.append(f"duplicate lap keys: {dupes}")
+    for name, part in race_export_frames(df):
+        sessions = sorted({str(value) for value in part.get("session_type", [])})
+        drivers = sorted({str(value) for value in part.get("driver", []) if str(value) not in {"", "nan", "None"}})
+        empty_trace = 0
+        if "telemetry" in part.columns:
+            empty_trace = int(part["telemetry"].fillna("[]").isin(["", "[]"]).sum())
+        duration = ""
+        if "lap_duration" in part.columns:
+            numbers = pd.to_numeric(part["lap_duration"], errors="coerce").dropna()
+            if not numbers.empty:
+                duration = (
+                    f" lap_sec=({numbers.min():.3f}, {numbers.median():.3f}, {numbers.max():.3f})"
+                )
+        event = part["event_name"].iloc[0]
+        lines.append(
+            f"{name}: event={event} laps={len(part)} sessions={sessions} "
+            f"drivers={len(drivers)} empty_telemetry={empty_trace}{duration}"
+        )
+    lines.append("kaggle upload: not run")
+    lines.append("===== END REPORT =====")
+    return "\n".join(lines)
+
+
 def combine_kaggle_frames(existing_df: pd.DataFrame, new_rows: pd.DataFrame) -> pd.DataFrame:
     if existing_df.empty:
         combined = new_rows
@@ -417,7 +510,12 @@ def combine_kaggle_frames(existing_df: pd.DataFrame, new_rows: pd.DataFrame) -> 
 
 # ── Step 6: Upload to Kaggle ──────────────────────────────────────────────────
 
-def apply_kaggle_metadata(api: KaggleApi, handle: str, columns: list[str] | None = None) -> None:
+def apply_kaggle_metadata(
+    api: KaggleApi,
+    handle: str,
+    columns: list[str] | None = None,
+    race_files: list[str] | None = None,
+) -> None:
     """Write dataset-metadata.json and PATCH license/tags/schema on the live listing."""
     require_existing_dataset_id()
     existing_card = fetch_existing_card_metadata(api, handle)
@@ -429,6 +527,7 @@ def apply_kaggle_metadata(api: KaggleApi, handle: str, columns: list[str] | None
                 columns=columns,
                 existing=existing_card,
                 live_handle=handle,
+                race_files=race_files,
             )
             metadata["licenses"] = [{"name": license_name}]
             write_metadata_file(os.path.join(tmp_dir, "dataset-metadata.json"), metadata)
@@ -454,7 +553,7 @@ def upload_to_kaggle(combined_df: pd.DataFrame, api: KaggleApi | None = None):
     require_existing_dataset_id()
     ensure_kaggle_auth()
     if api is None:
-        api = KaggleApi()
+        api = _new_kaggle_api()
         api.authenticate()
 
     today = datetime.now().strftime("%-d %B %Y")
@@ -468,13 +567,19 @@ def upload_to_kaggle(combined_df: pd.DataFrame, api: KaggleApi | None = None):
 
     tmp_dir = tempfile.mkdtemp(prefix="kaggle_upload_")
     try:
-        out_path = os.path.join(tmp_dir, KAGGLE_CSV_NAME)
-        combined_df.to_csv(out_path, index=False)
-        size_mb = os.path.getsize(out_path) / 1024 / 1024
-        print(f"  Saved: {KAGGLE_CSV_NAME} ({size_mb:.1f} MB, {len(combined_df):,} rows)")
-
-        write_metadata_file(os.path.join(tmp_dir, "dataset-metadata.json"), metadata)
-        notes = f"Auto-update: {len(combined_df):,} laps as of {today}"
+        write_kaggle_version(
+            combined_df,
+            tmp_dir,
+            existing_card=existing_card,
+            live_handle=handle,
+        )
+        size_mb = os.path.getsize(os.path.join(tmp_dir, KAGGLE_CSV_NAME)) / 1024 / 1024
+        race_count = len(race_export_frames(combined_df))
+        print(
+            f"  Saved: {KAGGLE_CSV_NAME} ({size_mb:.1f} MB, {len(combined_df):,} rows) "
+            f"and {race_count} race file(s)"
+        )
+        notes = f"Auto-update: {len(combined_df):,} laps as of {today} ({race_count} race files)"
         print(f"  Uploading → kaggle.com/datasets/{metadata['id']} (handle {handle})…")
         api.dataset_create_version(tmp_dir, notes, quiet=False, convert_to_csv=False)
 
@@ -484,13 +589,23 @@ def upload_to_kaggle(combined_df: pd.DataFrame, api: KaggleApi | None = None):
         except SystemExit:
             # Current Kaggle client exit(1)s on a rejected license name.
             print("  Named license was rejected; retrying standard license names…")
-            apply_kaggle_metadata(api, handle, columns=list(combined_df.columns))
+            apply_kaggle_metadata(
+                api,
+                handle,
+                columns=list(combined_df.columns),
+                race_files=[name for name, _ in race_export_frames(combined_df)],
+            )
         print(f"  ✅  Uploaded {KAGGLE_CSV_NAME} with usability metadata")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def run_kaggle_upload(*, republish: bool = False, metadata_only: bool = False) -> None:
+def run_kaggle_upload(
+    *,
+    republish: bool = False,
+    metadata_only: bool = False,
+    prepare_dir: str | None = None,
+) -> None:
     print("\n📤  F1 → Kaggle Upload")
     print(f"    BigQuery : {PROJECT}.{DATASET}")
     print(f"    Kaggle   : {kaggle_dataset()}")
@@ -499,8 +614,19 @@ def run_kaggle_upload(*, republish: bool = False, metadata_only: bool = False) -
     else:
         print()
 
+    if prepare_dir:
+        bq = bigquery.Client(project=PROJECT)
+        print("── Prepare local version (no Kaggle upload)…")
+        view_df = fetch_bq_laps(bq)
+        if view_df.empty:
+            view_df = fetch_ready_kaggle_laps(bq)
+        write_kaggle_version(view_df, prepare_dir)
+        print(export_quality_report(view_df))
+        print(f"  Wrote version folder: {prepare_dir}")
+        return
+
     ensure_kaggle_auth()
-    api = KaggleApi()
+    api = _new_kaggle_api()
     api.authenticate()
     print("  ✅  Kaggle authenticated\n")
 
@@ -549,10 +675,16 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="PATCH license/tags/schema on the live listing without uploading files",
     )
+    parser.add_argument(
+        "--prepare-dir",
+        default=None,
+        help="Write all_laps.csv and one CSV per race locally. Does not upload.",
+    )
     args = parser.parse_args(argv)
     run_kaggle_upload(
         republish=args.republish or env_flag("KAGGLE_REPUBLISH"),
         metadata_only=args.metadata_only,
+        prepare_dir=args.prepare_dir,
     )
 
 
