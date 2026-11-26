@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 
 import fastf1
 import numpy as np
+
+from fastf1_auth import ensure_fastf1_auth
 import pandas as pd
 from google.cloud import bigquery
 
@@ -107,12 +109,24 @@ def upload_in_batches(client, table_ref, rows, batch_size=1000, label="rows"):
 def _session_presence(client, table: str, years, race, session_types):
     year_list = ", ".join(map(str, years))
     session_list = ", ".join(f"'{s}'" for s in session_types)
+    event = race.replace("'", "''")
+    # Lap rows sometimes carry the event only through the sessions table.
     query = f"""
-        SELECT DISTINCT season, session_type
-        FROM `{PROJECT}.{DATASET}.{table}`
-        WHERE season IN ({year_list})
-          AND event_name = '{race}'
-          AND session_type IN ({session_list})
+        SELECT DISTINCT
+          l.season AS season,
+          COALESCE(NULLIF(l.session_type, ''), s.session_type) AS session_type
+        FROM `{PROJECT}.{DATASET}.{table}` AS l
+        LEFT JOIN (
+          SELECT DISTINCT session_key, event_name, session_type
+          FROM `{PROJECT}.{DATASET}.sessions`
+        ) AS s
+          ON l.session_key = s.session_key
+        WHERE l.season IN ({year_list})
+          AND (
+            l.event_name = '{event}'
+            OR s.event_name = '{event}'
+          )
+          AND COALESCE(NULLIF(l.session_type, ''), s.session_type) IN ({session_list})
     """
     try:
         df = client.query(query).to_dataframe()
@@ -127,7 +141,12 @@ def check_live_existing(client, years, race, session_types):
 
 
 def check_existing(client, years, race, session_types):
-    found = _session_presence(client, "telemetry", years, race, session_types)
+    """Skip a session only when it already has lap rows.
+
+    Telemetry without laps is not enough: those sessions still need a batch
+    import. Live laps win, and the batch job must not import them again.
+    """
+    found = _session_presence(client, "laps", years, race, session_types)
     found.update(check_live_existing(client, years, race, session_types))
     return found
 
@@ -195,6 +214,13 @@ def _load_session_with_retries(year, race, stype, attempts=5):
     """Load a FastF1 session with retries and telemetry fallback."""
     import time
 
+    if ensure_fastf1_auth() == "missing":
+        raise RuntimeError(
+            "F1 bearer missing. Put the subscription token in "
+            "~/.config/interval/f1-subscription-token or set "
+            "F1_USERNAME and F1_PASSWORD."
+        )
+
     last_err = None
     for attempt in range(1, attempts + 1):
         warn_cap = _WarningCapture()
@@ -251,6 +277,8 @@ def _load_session_with_retries(year, race, stype, attempts=5):
             last_err = e
             msg = str(e)
             print(f"  ❌  {year} {stype}: attempt {attempt}/{attempts}: {msg[:200]}")
+            if "bearer missing" in msg.lower():
+                raise
             if attempt < attempts:
                 time.sleep(min(2 ** attempt, 30))
         finally:
@@ -822,7 +850,7 @@ def parse_args():
     )
     parser.add_argument(
         "--session", "-s", nargs="+",
-        choices=["FP1", "FP2", "FP3", "Q", "SQ", "R"],
+        choices=["FP1", "FP2", "FP3", "Q", "SQ", "S", "R"],
         default=["R"],
         help="Session type(s), default: R"
     )

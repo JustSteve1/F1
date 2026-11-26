@@ -19,6 +19,29 @@ class IsKaggleLapsCsvTests(unittest.TestCase):
         self.assertTrue(meta.is_kaggle_laps_csv("/tmp/All Laps - 11 October 2026.csv"))
         self.assertFalse(meta.is_kaggle_laps_csv("dataset-metadata.json"))
         self.assertFalse(meta.is_kaggle_laps_csv("notes.txt"))
+        self.assertFalse(meta.is_kaggle_laps_csv("2026_mexico_city_grand_prix.csv"))
+
+    def test_race_slug_strips_accents(self) -> None:
+        self.assertEqual(
+            meta.race_csv_name(2026, "São Paulo Grand Prix"),
+            "2026_sao_paulo_grand_prix.csv",
+        )
+        self.assertEqual(
+            meta.race_csv_name(2026.0, "Mexico City Grand Prix"),
+            "2026_mexico_city_grand_prix.csv",
+        )
+
+    def test_metadata_lists_every_race_file(self) -> None:
+        race = "2026_mexico_city_grand_prix.csv"
+        built = meta.build_dataset_metadata(race_files=[race])
+        paths = [item["path"] for item in built["resources"]]
+        names = [item["name"] for item in built["data"]]
+        self.assertEqual(paths, ["all_laps.csv", race])
+        self.assertEqual(names, paths)
+        self.assertEqual(
+            built["resources"][1]["schema"]["fields"],
+            built["resources"][0]["schema"]["fields"],
+        )
 
 
 class DatasetHandleTests(unittest.TestCase):

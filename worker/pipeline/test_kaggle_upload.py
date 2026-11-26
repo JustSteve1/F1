@@ -31,6 +31,7 @@ class DownloadMatcherTests(unittest.TestCase):
         self.assertTrue(upload.is_kaggle_laps_csv("/tmp/All Laps - 11 October 2026.csv"))
         self.assertFalse(upload.is_kaggle_laps_csv("dataset-metadata.json"))
         self.assertFalse(upload.is_kaggle_laps_csv("notes.txt"))
+        self.assertFalse(upload.is_kaggle_laps_csv("2026_mexico_city_grand_prix.csv"))
 
 
 class MetadataBuilderTests(unittest.TestCase):
@@ -70,7 +71,18 @@ class MetadataBuilderTests(unittest.TestCase):
 
 class UploadToKaggleTests(unittest.TestCase):
     def test_writes_stable_csv_and_metadata_then_calls_both_apis(self) -> None:
-        frame = pd.DataFrame([{column: 0 for column in COLUMN_ORDER}])
+        rows = []
+        for event, driver in (
+            ("Mexico City Grand Prix", "VER"),
+            ("São Paulo Grand Prix", "NOR"),
+        ):
+            row = {column: 0 for column in COLUMN_ORDER}
+            row["season"] = 2026
+            row["event_name"] = event
+            row["driver"] = driver
+            row["session_type"] = "R"
+            rows.append(row)
+        frame = pd.DataFrame(rows)
         captured: dict = {}
 
         def create_version(folder, notes, quiet=False, convert_to_csv=False):
@@ -81,6 +93,8 @@ class UploadToKaggleTests(unittest.TestCase):
                 Path(folder, "dataset-metadata.json").read_text(encoding="utf-8")
             )
             captured["header"] = Path(folder, "all_laps.csv").read_text(encoding="utf-8").splitlines()[0]
+            captured["mexico"] = pd.read_csv(Path(folder) / "2026_mexico_city_grand_prix.csv")
+            captured["paulo"] = pd.read_csv(Path(folder) / "2026_sao_paulo_grand_prix.csv")
 
         api = MagicMock()
         api.dataset_create_version.side_effect = create_version
@@ -112,7 +126,26 @@ class UploadToKaggleTests(unittest.TestCase):
 
         self.assertEqual(
             captured["files"],
-            {"all_laps.csv", "dataset-metadata.json"},
+            {
+                "all_laps.csv",
+                "2026_mexico_city_grand_prix.csv",
+                "2026_sao_paulo_grand_prix.csv",
+                "dataset-metadata.json",
+            },
+        )
+        mexico = captured["mexico"]
+        paulo = captured["paulo"]
+        self.assertEqual(list(mexico.columns), COLUMN_ORDER)
+        self.assertEqual(list(paulo.columns), COLUMN_ORDER)
+        self.assertEqual(set(mexico["event_name"]), {"Mexico City Grand Prix"})
+        self.assertEqual(set(paulo["event_name"]), {"São Paulo Grand Prix"})
+        self.assertEqual(
+            [item["path"] for item in captured["meta"]["resources"]],
+            [
+                "all_laps.csv",
+                "2026_mexico_city_grand_prix.csv",
+                "2026_sao_paulo_grand_prix.csv",
+            ],
         )
         self.assertEqual(captured["header"].split(","), COLUMN_ORDER)
         self.assertEqual(captured["meta"]["licenses"], [{"name": "CC-BY-4.0"}])
@@ -122,7 +155,7 @@ class UploadToKaggleTests(unittest.TestCase):
             COLUMN_ORDER,
         )
         self.assertEqual(captured["meta"]["description"], "# Live card")
-        self.assertTrue(captured["notes"].startswith("Auto-update: 1 laps as of "))
+        self.assertTrue(captured["notes"].startswith("Auto-update: 2 laps as of "))
         self.assertEqual(
             captured["update"],
             ("stevefza/f1-2026-bahrain-testing-day-2", captured["folder"]),
